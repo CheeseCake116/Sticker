@@ -74,7 +74,7 @@ class Sticker(QMainWindow):
         self.saveEvent.connect(self.managerObj.stickerSave)
         self.assignEvent.connect(self.managerObj.stickerAssign)
         self.manageEvent.connect(self.managerObj.openManageUi)
-        self.groupEvent.connect(self.managerObj.openGroupUi)
+        # self.groupEvent.connect(self.managerObj.openGroupUi) # 그룹 기능 확정될때까지
         self.presetEvent.connect(self.managerObj.openPresetUi)
         self.removeEvent.connect(self.managerObj.stickerRemove)
         self.quitEvent.connect(self.managerObj.programQuit)
