@@ -1,0 +1,12 @@
+ffmpeg/
+license/
+L2D/
+LOWidget/
+dist/
+__pycache__/
+build/
+temp/
+bgm/
+voice/
+character/
+resources/
