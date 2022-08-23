@@ -1,5 +1,5 @@
 import os, sys, json, random, time, subprocess
-from PyQt5.QtWidgets import QMainWindow, QSystemTrayIcon, QAction, QMenu, QLabel, QWidget, QDialog, QFileDialog, QApplication, QTableWidget, QPushButton, QTableWidgetItem
+from PyQt5.QtWidgets import QMainWindow, QSystemTrayIcon, QAction, QMenu, QLabel, QWidget, QDialog, QFileDialog, QApplication, QTableWidget, QPushButton, QTableWidgetItem, QVBoxLayout
 from PyQt5 import uic
 from PyQt5.QtCore import QThread, pyqtSignal, QSize, Qt, pyqtSlot
 from PyQt5.QtGui import QIcon, QCursor, QIntValidator, QMovie
@@ -46,12 +46,14 @@ class SaveTimer(QThread):
 
     def run(self):
         while True:
+            # 0.1초마다 노래 하나 끝났는지 확인
             for i in range(10):
                 time.sleep(0.1)
                 if self.manager.bgmChannel:
                     if not self.manager.bgmChannel.get_busy():
                         self.manager.bgmPlay(self.manager.nextBgmIndex)
-
+            
+            # 1초마다 세이브 확인
             if self.isSaved is False:
                 self.saveSignal.emit()
                 self.isSaved = True
@@ -98,6 +100,8 @@ class StickerManager(QMainWindow):
     '''
 
     manageUi = None # ManageWindow 객체
+    groupUis = [] # 다중부관 그룹 관리 객체. 각 프리셋 당 하나씩 관리
+    presetUi = None # 프리셋 관리 객체
     bgmFile = [] # 브금 파일명 리스트
     bgmSound = None # Sound 객체. 음원 재생용
     bgmChannel = None # Channel 객체
@@ -118,16 +122,19 @@ class StickerManager(QMainWindow):
         self.saveTimer.start()
 
         # 트레이 메뉴 설정
-        manage_action = QAction("관리창 열기", self)
+        manage_action = QAction("홈 열기", self)
+        preset_action = QAction("프리셋 열기", self)
         hide_action = QAction("숨기기", self)
         call_action = QAction("숨김 해제", self)
         quit_action = QAction("종료", self)
         manage_action.triggered.connect(self.openManageUi)
+        preset_action.triggered.connect(self.openPresetUi)
         hide_action.triggered.connect(self.hideStickers)
         call_action.triggered.connect(self.callSticker)
         quit_action.triggered.connect(self.programQuit)
         tray_menu = QMenu()
         tray_menu.addAction(manage_action)
+        tray_menu.addAction(preset_action)
         tray_menu.addAction(hide_action)
         tray_menu.addAction(call_action)
         tray_menu.addAction(quit_action)
@@ -321,24 +328,50 @@ class StickerManager(QMainWindow):
 
         self.manageUi.show()
 
-class StickerTableWidget(QWidget):
+    def openGroupUi(self, idx, subName=""):
+        if self.groupUis[idx] is None:
+            self.groupUis[idx] = GroupManager(subName=subName)
+
+        self.groupUis[idx].show()
+        print(self.groupUis)
+
+    def closeGroupUi(self, ui):
+        if ui in self.groupUis:
+            idx = self.groupUis.index(ui)
+            self.groupUis[idx] = None
+            print(self.groupUis)
+
+    def deleteGroupUi(self, ui):
+        if ui in self.groupUis:
+            idx = self.groupUis.index(ui)
+            del self.groupUis[idx]
+            print(self.groupUis)
+
+    def openPresetUi(self):
+        if not self.presetUi:
+            self.presetUi = PresetManager()
+
+        self.presetUi.show()
+
+class GroupManager(QWidget):
     """표를 보여주는 위젯"""
-    def __init__(self, rowCount=0):
+
+    def __init__(self, subName="", rowCount=5):
         super().__init__()
-        self.setWindowTitle("전체 부관")
+        self.setWindowTitle(subName + " 부관 관리")
 
         table = QTableWidget(self)
-        table.resize(300, 200)
-        # 표의 크기를 지정
+        table.resize(500, 200) # 표의 크기를 지정
         table.setColumnCount(5)
         table.setRowCount(rowCount)
+
         # 열 제목 지정
         table.setHorizontalHeaderLabels(
-            ['이름', '상태', '위젯 설정', '숨기기', '업무 종료']
+            ['그룹명', '상태', '위젯 설정', '숨기기', '업무 종료']
         )
         for i in range(3):
             btn = QPushButton("삭제")
-            table.setCellWidget(i,2, btn)
+            table.setCellWidget(i, 2, btn)
 
         # 셀 내용 채우기
         table.setItem(0, 0, QTableWidgetItem('A'))
@@ -348,11 +381,132 @@ class StickerTableWidget(QWidget):
         table.setItem(1, 1, QTableWidgetItem('2'))
         table.setItem(2, 1, QTableWidgetItem('3'))
 
+    def closeEvent(self, event):
+        manage.closeGroupUi(self)
+
+class PresetManager(QWidget):
+    """표를 보여주는 위젯"""
+    rowCount = 0
+    table = None
+    presetItems = []
+
+    def __init__(self, _rowCount=0):
+        super().__init__()
+        self.rowCount = _rowCount
+        self.setWindowTitle("전체 부관")
+        self.InitUi()
+
+    def InitUi(self):
+        # 위젯 추가
+        self.newButton = QPushButton("새 그룹 추가") # 그룹 추가 버튼 위젯
+        self.table = QTableWidget(self) # 테이블 위젯
+
+        # 레이아웃 설정
+        mainLayout = QVBoxLayout()
+        mainLayout.setContentsMargins(0, 0, 0, 0)
+        mainLayout.addWidget(self.newButton)
+        mainLayout.addWidget(self.table)
+        self.setLayout(mainLayout)
+
+        # 테이블 설정
+        self.table.resize(600, 200) # 표의 크기를 지정
+        self.table.setColumnCount(5)
+        self.table.setRowCount(self.rowCount)
+
+        # 열 제목 지정
+        self.table.setHorizontalHeaderLabels(
+            ['그룹명', '상태', '호출', '부관 설정', '삭제']
+        )
+
+        self.newButton.released.connect(self.AddItem)
+
+    def AddItem(self):
+        self.rowCount += 1
+        self.table.setRowCount(self.rowCount)
+
+        # 프리셋 생성
+        preset = PresetItem(self, "프리셋 " + str(self.rowCount), True)
+        self.presetItems.append(preset)
+
+        # 표에 초기 데이터 할당
+        idx = self.rowCount - 1
+        self.table.setItem(idx, 0, preset.groupNameItem)
+        self.table.setItem(idx, 1, preset.stateItem)
+        self.table.setCellWidget(idx, 2, preset.callButton)
+        self.table.setCellWidget(idx, 3, preset.manageButton)
+        self.table.setCellWidget(idx, 4, preset.deleteButton)
+
+        # groupUis에 데이터 추가
+        manage.groupUis.append(None)
+
+    def DeleteItem(self):
+        currentRow = self.table.currentRow()
+        print(currentRow)
+        self.table.removeRow(currentRow)
+        self.rowCount -= 1
+        del self.presetItems[currentRow]
+        del manage.groupUis[currentRow]
+
+class PresetItem:
+    groupName = ""
+    state = False
+    stateString = ""
+    callButton = None
+    manageButton = None
+    deleteButton = None
+    parent = None
+
+    groupNameItem = None
+    stateItem = None
+
+    def __init__(self, p, _groupName, _state):
+        self.parent = p
+        self.groupName = _groupName
+        self.state = _state
+        if _state:
+            self.stateString = "업무 중"
+            self.callButton = QPushButton("업무 해제")
+        else:
+            self.stateString = ""
+            self.callButton = QPushButton("불러오기")
+        self.manageButton = QPushButton("부관 설정")
+        self.deleteButton = QPushButton("그룹 해체")
+        self.groupNameItem = QTableWidgetItem(self.groupName)
+        self.stateItem = QTableWidgetItem(self.stateString)
+
+        # 이벤트 설정
+        self.callButton.released.connect(self.changeState)
+        self.manageButton.released.connect(self.openGroupUi)
+        self.deleteButton.released.connect(self.parent.DeleteItem)
+
+    def changeState(self):
+        print("change")
+        if self.state:
+            self.state = False
+            self.stateString = ""
+            self.stateItem.setText(self.stateString)
+            self.callButton.setText("불러오기")
+        else:
+            self.state = True
+            self.stateString = "업무 중"
+            self.stateItem.setText(self.stateString)
+            self.callButton.setText("업무 해제")
+
+    def findMyIndex(self):
+        if self in self.parent.presetItems:
+            idx = self.parent.presetItems.index(self)
+            return idx
+
+    def openGroupUi(self):
+        idx = self.findMyIndex()
+        print(idx)
+        manage.openGroupUi(idx, subName=self.groupName)
+
+    def __del__(self):
+        print("deleted")
 
 
-
-
-
+# 크기 조절, 회전을 맡는 UI인데 개편작업으로 삭제
 # class ScaleWindow(QMainWindow, scaleWindowUi):
 #     size = 1
 #     rotate = 0

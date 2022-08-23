@@ -1,11 +1,9 @@
-import os, sys, json, random, time, subprocess
+import os, sys, random, time, subprocess
 from PyQt5.QtWidgets import *
-from PyQt5 import uic
 from PyQt5.QtCore import QThread, pyqtSignal, QSize, Qt, pyqtSlot
 from PyQt5.QtGui import QIcon, QCursor, QIntValidator, QMovie, QPixmap
 from PIL import Image, ImageQt
 from pygame import mixer
-from ManageWindow import ManageWindow
 
 
 
@@ -60,9 +58,11 @@ class Sticker(QMainWindow):
 
     saveEvent = pyqtSignal(dict)
     assignEvent = pyqtSignal(str, object)
-    manageEvent = pyqtSignal()
-    removeEvent = pyqtSignal(str)
-    quitEvent = pyqtSignal()
+    manageEvent = pyqtSignal() # 부관 설정창 열기
+    groupEvent = pyqtSignal() # 그룹 설정창 열기
+    presetEvent = pyqtSignal() # 프리셋 설정창 열기
+    removeEvent = pyqtSignal(str) # 부관 업무에서 해제
+    quitEvent = pyqtSignal() # 프로그램 종료
 
     def __init__(self, manager, data, key):
         super().__init__()
@@ -74,11 +74,15 @@ class Sticker(QMainWindow):
         self.saveEvent.connect(self.managerObj.stickerSave)
         self.assignEvent.connect(self.managerObj.stickerAssign)
         self.manageEvent.connect(self.managerObj.openManageUi)
+        self.groupEvent.connect(self.managerObj.openGroupUi)
+        self.presetEvent.connect(self.managerObj.openPresetUi)
         self.removeEvent.connect(self.managerObj.stickerRemove)
         self.quitEvent.connect(self.managerObj.programQuit)
 
         self.cmenu = QMenu(self)
         self.menu_setting = self.cmenu.addAction("부관 설정")
+        self.menu_group = self.cmenu.addAction("그룹 설정")
+        self.menu_preset = self.cmenu.addAction("프리셋 설정")
         self.menu_hide = self.cmenu.addAction("숨기기")
         self.menu_retire = self.cmenu.addAction("부관 업무에서 해제")
         self.cmenu.addSeparator()
@@ -280,15 +284,19 @@ class Sticker(QMainWindow):
 
     def contextMenuEvent(self, event):
         action = self.cmenu.exec_(self.mapToGlobal(event.pos()))
-        if action == self.menu_hide:
+        if action == self.menu_hide: # 숨기기
             self.stickerHide()
-        elif action == self.menu_setting:
+        elif action == self.menu_setting: # 부관 설정
             self.openSetting(new=False)
-        elif action == self.menu_manage:
+        elif action == self.menu_group: # 그룹 설정
+            self.groupEvent.emit()
+        elif action == self.menu_preset: # 프리셋 설정
+            self.presetEvent.emit()
+        elif action == self.menu_manage: # 위젯 설정
             self.manageEvent.emit()
-        elif action == self.menu_retire:
+        elif action == self.menu_retire: # 부관 임무에서 해제
             self.removeEvent.emit(self.key)
-        elif action == self.menu_quit:
+        elif action == self.menu_quit: # 종료
             self.quitEvent.emit()
 
     def openSetting(self, new=False):

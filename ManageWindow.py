@@ -25,10 +25,12 @@ class ManageWindow(QWidget):
     endEvent = pyqtSignal()
     bgmChangeEvent = pyqtSignal(list)
     bgmVolumeEvent = pyqtSignal(int)
+    stickerManager = None
 
-    def __init__(self, bgmVolume=70):
+    def __init__(self, _stickerManager=None):
         super().__init__()
         # self.setupUi(self)  # UI 로딩
+        self.stickerManager = _stickerManager
         self.setWindowIcon(QIcon(iconPath))
         self.setWindowTitle("라오 위젯 설정")
         # self.setFixedSize(457, 344)
@@ -40,7 +42,7 @@ class ManageWindow(QWidget):
         self.quitButton.released.connect(self.endHandler)
         self.bgmButton.released.connect(self.setBGM)
         self.bgmRemoveButton.released.connect(self.removeBGM)
-        self.volumeSlider.setValue(bgmVolume)
+        self.volumeSlider.setValue(70)
         self.volumeSlider.valueChanged.connect(self.setBGMVolume)
 
     def initUI(self):
