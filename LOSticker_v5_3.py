@@ -7,7 +7,7 @@ from PyQt5.QtGui import QIcon, QCursor, QIntValidator, QMovie
 from PIL import Image, ImageQt
 from pygame import mixer
 from ManageWindow import ManageWindow
-from Sticker import Sticker
+from Sticker2 import Sticker, SettingWindow
 
 '''
 빌드 후 임시폴더 위치를 찾기 위한 설정
@@ -62,7 +62,8 @@ class SaveTimer(QThread):
 
 class StickerManager(QMainWindow):
     # 현재 켜져 있는 부관
-    stickerDict = {}
+    # stickerDict = {}
+    currentSticker = None
 
     # 로딩 가능한 부관 전체 및 읽기/쓰기용 딕셔너리
     jsonData = {
@@ -76,40 +77,61 @@ class StickerManager(QMainWindow):
     '''
     파일 형태
     jsonData = {
+        # 현재 선택된 프리셋 번호
+        'PresetKey' : '0'
+        # 브금
         'BGM' : {
             'BGMFiles': [...],
             'BGMVolume': 70
         }
+        # 스티커
         'Stickers' : {
+            # 0번 프리셋
             '0' : {
-                "Position": [-19, 80],
-                "AlwaysOnTop": true,
-                "CharacterImage": "C:/Users/CheeseCake/PycharmProjects/pythonProject/LastOrigin/Sticker/character/BR_Andvari_0_O_S.webp",
-                "LoginVoiceFiles": [
-                    "C:/Users/CheeseCake/PycharmProjects/pythonProject/LastOrigin/Sticker/voice/BR_Andvari_Login.mp3"
-                ],
-                "IdleVoiceFiles": [
-                    "C:/Users/CheeseCake/PycharmProjects/pythonProject/LastOrigin/Sticker/voice/BR_Andvari_SPIdle_02_01.mp3"
-                ],
-                "CharacterSize": 800,
-                "SizeRestrict": false,
-                "VoiceVolume": 50
+                'options' : {
+                    "GroupName": "기본 프리셋"
+                    # 프리셋 설정
+                    "AlwaysOnTop": true,    # 항상 위에
+                }
+                'characters' : {
+                    # 0번 부관
+                    '0' : {
+                        "CharacterName": "기본 부관",
+                        "Position": [-19, 80],  # 위치
+                        "depth": 0,             # 놓인 순서
+                        "CharacterImage": "character/BR_Andvari_0_O_S.webp",
+                        "LoginVoiceFiles": [
+                            "voice/BR_Andvari_Login.mp3"
+                        ],
+                        "IdleVoiceFiles": [
+                            "voice/BR_Andvari_SPIdle_02_01.mp3"
+                        ],
+                        "CharacterSize": 800,
+                        "SizeRestrict": false,
+                        "VoiceVolume": 50
+                    },
+                    
+                    # 1번 부관
+                    '1' : { ... }
+                }
             }
-            '1' : {...}
+            '1' : { ... }
         }
     }
     '''
 
-    manageUi = None # ManageWindow 객체
-    groupUis = [] # 다중부관 그룹 관리 객체. 각 프리셋 당 하나씩 관리
-    presetUi = None # 프리셋 관리 객체
-    bgmFile = [] # 브금 파일명 리스트
-    bgmSound = None # Sound 객체. 음원 재생용
-    bgmChannel = None # Channel 객체
-    nextBgmIndex = 0 # 순차재생 다음 인덱스
-    bgmVolume = 50 # 브금 볼륨
-    tray_icon = None # QSystemTrayIcon 객체
-    saveTimer = None # SaveTimer 객체. 주기적으로 정보를 자동저장함
+    presetKey = '-1'    # 현재 실행중인 프리셋의 키 번호
+    manageUi = None     # ManageWindow 객체
+    groupUis = {}       # 다중부관 그룹 관리 객체. 각 프리셋 당 하나씩 관리. 키값 : UI객체
+    presetUi = None     # 프리셋 관리 객체
+    settingUi = None    # 캐릭터 설정창 객체
+    bgmFile = []        # 브금 파일명 리스트
+    bgmSound = None     # Sound 객체. 음원 재생용
+    bgmChannel = None   # Channel 객체
+    nextBgmIndex = 0    # 순차재생 다음 인덱스
+    bgmVolume = 50      # 브금 볼륨
+    tray_icon = None    # QSystemTrayIcon 객체
+    saveTimer = None    # SaveTimer 객체. 주기적으로 정보를 자동저장함
 
     def __init__(self):
         super().__init__()
@@ -145,16 +167,27 @@ class StickerManager(QMainWindow):
         # 세이브 파일 리딩
         self.readDataFile()
 
+        # 로그인 보이스 실행
+        if self.currentSticker:
+            self.currentSticker.loginVoicePlay(-1)
+
         # 다중부관인 경우 랜덤 보이스 실행
-        if len(self.stickerDict) > 0:
-            key = list(self.stickerDict.keys())[random.randrange(0, len(self.stickerDict))]
-            self.stickerDict[key].loginVoicePlay(-1)
+        # if len(self.stickerDict) > 0:
+        #     key = list(self.stickerDict.keys())[random.randrange(0, len(self.stickerDict))]
+        #     self.stickerDict[key].loginVoicePlay(-1)
 
     def readDataFile(self):
         try:
-            with open("./data.LOSJ", "r") as jsonFile:
+            with open("./data.LOSJ", "r", encoding="UTF-8") as jsonFile:
                 tempJsonData = json.load(jsonFile)
 
+                # 실행할 프리셋 번호
+                self.presetKey = '-1'
+                if 'PresetKey' in tempJsonData:
+                    if tempJsonData['PresetKey'] in tempJsonData['Stickers']: # 선택된 프리셋 번호가 프리셋에 존재하는지
+                        self.presetKey = tempJsonData['PresetKey']
+
+                # 브금
                 if 'BGM' in tempJsonData:
                     bgmData = tempJsonData['BGM']
                     if 'BGMFiles' in bgmData:
@@ -170,27 +203,42 @@ class StickerManager(QMainWindow):
                     if not self.bgmSound:
                         self.bgmPlay()
 
+                # 스티커 정보
                 if 'Stickers' in tempJsonData:
                     stickerData = tempJsonData['Stickers']
                     for key in stickerData:
-                        if key not in self.stickerDict:
-                            data = stickerData[key]
-                            if os.path.exists(data['CharacterImage']):
-                                sticker = Sticker(self, data, key)
-                                self.stickerDict[key] = sticker
-                                if key not in self.jsonData['Stickers']:
-                                    self.jsonData['Stickers'][key] = data
-                                sticker.show()
-                self.writeDataFile()
+                        # 프리셋 정보
+                        data = stickerData[key]
+
+                        # 딕셔너리에 저장
+                        self.jsonData['Stickers'][key] = data
+
+                        # 실행해야 할 프리셋과 키가 같으면 스티커 생성
+                        if self.presetKey == key:
+                            self.loadSticker(data=data, key=key)
+
+                # 걸러진 데이터로 다시 저장
+                self.thereIsSomethingToSave()
 
         except Exception as e:
             print("read Exception: " + str(e))
         finally:
-            if not self.stickerDict:
-                self.openManageUi()
+            pass
+            # if not self.stickerDict:
+            #     self.openManageUi()
+
+    def loadSticker(self, data, key):
+        alwaysontop = False
+        if 'options' in data:
+            if 'AlwaysOnTop' in data['options']:
+                alwaysontop = data['options']
+
+        sticker = Sticker(self, data=data, key=key, AoT=alwaysontop)
+        self.currentSticker = sticker
+        sticker.showMaximized()
 
     def writeDataFile(self):
-        with open("./data.LOSJ", "w") as jsonFile:
+        with open("./data.LOSJ", "w", encoding="UTF-8") as jsonFile:
             json.dump(self.jsonData, jsonFile, indent=2)
             print("save")
 
@@ -199,10 +247,15 @@ class StickerManager(QMainWindow):
         if self.saveTimer:
             self.saveTimer.isSaved = False
 
+    # 현재 부관그룹 숨기기
+    def stickerHide(self):
+        if self.currentSticker:
+            self.currentSticker.hide()
+
     # 숨긴 스티커 볼러오기
     def callSticker(self):
-        for key in self.stickerDict:
-            self.stickerDict[key].show()
+        if self.currentSticker:
+            self.currentSticker.show()
 
     def bgmPlay(self, bgmIndex=0):
         # bgm 목록이 존재하는가
@@ -248,25 +301,28 @@ class StickerManager(QMainWindow):
             self.nextBgmIndex = bgmIndex + 1
 
         except Exception as e:
-            print("Voice Exception: " + str(e))
+            print("BGM Exception: " + str(e))
 
-    # 각 스티커에 부여된 키 중 비어있는 키를 찾기
-    def findProperKey(self):
+    # 각 그룹에 부여된 키 중 비어있는 키를 찾기
+    def findProperGroupKey(self):
         key = 0
-        while str(key) in self.stickerDict:
+        while str(key) in self.jsonData['Stickers']:
             key += 1
         return str(key)
 
-    # 특정 스티커 숨기기
-    def stickerHide(self, key):
-        if key in self.stickerDict:
-            self.stickerDict[key].hide()
+    # 각 부관에 부여된 키 중 비어있는 키를 찾기
+    def findProperChaKey(self, gkey):
+        key = 0
+        while str(key) in self.jsonData['Stickers'][gkey]['characters']:
+            key += 1
+        return str(key)
 
     # 스티커 정보 저장
     def stickerSave(self, data):
         self.jsonData['Stickers'].update(data)
         self.thereIsSomethingToSave()
 
+    #
     def stickerAssign(self, key, sticker):
         # 최초 생성 시
         if key and sticker:
@@ -274,9 +330,10 @@ class StickerManager(QMainWindow):
                 self.stickerDict[key] = sticker
 
     def stickerAdd(self):
-        key = self.findProperKey()
-        sticker = Sticker(self, None, key)
-        sticker.show()
+        pass
+        # key = self.findProperGroupKey()
+        # sticker = Sticker(self, None, key)
+        # sticker.show()
 
     def stickerRemove(self, key):
         if key in self.stickerDict:
@@ -302,16 +359,16 @@ class StickerManager(QMainWindow):
     def hideStickers(self):
         for key in self.stickerDict:
             sticker = self.stickerDict[key]
-            if sticker.secondWindow:
-                sticker.secondWindow.close()
+            if sticker.SettingWindow:
+                sticker.SettingWindow.close()
             sticker.hide()
 
     def managerUiQuit(self):
         self.manageUi = None
 
     def programQuit(self):
-        for key in self.stickerDict:
-            self.stickerDict[key].close()
+        if self.currentSticker:
+            self.currentSticker.close()
         if self.manageUi:
             self.manageUi.close()
         sys.exit()
@@ -329,23 +386,23 @@ class StickerManager(QMainWindow):
 
         self.manageUi.show()
 
-    def openGroupUi(self, idx, subName=""):
-        if self.groupUis[idx] is None:
-            self.groupUis[idx] = GroupManager(subName=subName)
+    def openGroupUi(self, groupKey):
+        subName = self.jsonData['Stickers'][groupKey]['options']['GroupName']
 
-        self.groupUis[idx].show()
+        if groupKey not in self.groupUis or self.groupUis[groupKey] is None:
+            self.groupUis[groupKey] = GroupManager(subName=subName, gKey=groupKey)
+
+        self.groupUis[groupKey].show()
         print(self.groupUis)
 
-    def closeGroupUi(self, ui):
-        if ui in self.groupUis:
-            idx = self.groupUis.index(ui)
-            self.groupUis[idx] = None
+    def closeGroupUi(self, groupKey):
+        if groupKey in self.groupUis:
+            self.groupUis[groupKey] = None
             print(self.groupUis)
 
-    def deleteGroupUi(self, ui):
-        if ui in self.groupUis:
-            idx = self.groupUis.index(ui)
-            del self.groupUis[idx]
+    def deleteGroupUi(self, groupKey):
+        if groupKey in self.groupUis:
+            del self.groupUis[groupKey]
             print(self.groupUis)
 
     def openPresetUi(self):
@@ -354,14 +411,103 @@ class StickerManager(QMainWindow):
 
         self.presetUi.show()
 
+    def openSettingUi(self, groupKey, chaKey):
+        if self.settingUi is None:
+            # 전송할 데이터 준비
+            data = self.jsonData['Stickers'][groupKey]['characters'][chaKey]
+            chaFile = data['CharacterImage']          # 이미지 파일 경로
+            loginVoiceFile = data['LoginVoiceFiles']  # 로그인 보이스 경로 리스트
+            idleVoiceFile = data['IdleVoiceFiles']    # 터치 보이스 경로 리스트
+            chaSize = data['CharacterSize']           # 캐릭터 사이즈 제한값
+            voiceVolume = data['VoiceVolume']         # 보이스 볼륨값
+            isSizeRestricted = data['SizeRestrict']   # 사이즈 제한 여부
+
+            self.settingUi = SettingWindow()
+            self.settingUi.setParent(self)
+            self.settingUi.setSetting(chaFile, loginVoiceFile, idleVoiceFile, chaSize, voiceVolume,
+                                      isSizeRestricted)
+            r = self.settingUi.showModal()
+
+            if r:
+                # 캐릭터 파일
+                if os.path.exists(self.settingUi.chaFile):
+                    # if not self.chaFile:
+                    #     # 스티커 생성
+                    #     self.assignEvent.emit(self.key, self)
+
+                    chaFile = self.settingUi.chaFile
+
+                # 캐릭터 크기 제한
+                isSizeRestricted = self.settingUi.imageCheckBox.isChecked()
+
+                # 캐릭터 사이즈
+                try:
+                    if self.settingUi.chaSizeLine.text():
+                        chaSize = int(self.settingUi.chaSizeLine.text())
+                    else:
+                        chaSize = 800
+                except:
+                    pass
+
+                # 접속 대사 각 파일 존재하는지 검사 후 저장
+                tempLoginVoice = []
+                for file in self.settingUi.loginVoiceFile:
+                    if os.path.exists(file):
+                        tempLoginVoice.append(file)
+                if tempLoginVoice:
+                    loginVoiceFile = tempLoginVoice
+
+                # 일반 대사
+                tempIdleVoice = []
+                for file in self.settingUi.idleVoiceFile:
+                    if os.path.exists(file):
+                        tempIdleVoice.append(file)
+                if tempIdleVoice:
+                    idleVoiceFile = tempIdleVoice
+
+                # Always on Top 설정(그룹 설정으로 옮겨감)
+                # if self.AlwaysOnTop != self.settingUi.AOTCheckBox.isChecked():
+                #     self.AlwaysOnTop = self.settingUi.AOTCheckBox.isChecked()
+                #     self.setupWindow()
+
+                # 보이스 볼륨
+                voiceVolume = self.settingUi.voiceSlider.value()
+
+                # 데이터 저장
+                data['CharacterImage'] = chaFile
+                data['LoginVoiceFiles'] = loginVoiceFile
+                data['IdleVoiceFiles'] = idleVoiceFile
+                data['CharacterSize'] = chaSize
+                data['VoiceVolume'] = voiceVolume
+                data['SizeRestrict'] = isSizeRestricted
+                self.jsonData['Stickers'][groupKey]['characters'][chaKey] = data
+
+                # 현재 실행되어 있는 스티커일경우
+                if groupKey == self.presetKey:
+                    self.currentSticker.stickers[chaKey] = data
+
+                self.setCharacter(data, chaKey) # 스티커에 할당
+                self.thereIsSomethingToSave()   # 저장
+
+            # 캐릭터 이미지가 없으면 자동삭제했었는데
+            # 이제 관리창이 생겨서 데이터가 없어도 굳이 캐릭터를 자동삭제하지 않음
+            # else:
+            #     if os.path.exists(self.chaFile) is False:
+            #         self.removeEvent.emit(self.key)
+            #         self.stickerQuit()
+
+        self.settingUi = None
+
 class GroupManager(QWidget):
+    groupKey = '-1'
     rowCount = 0
     table = None
     groupItems = []
 
-    def __init__(self, _rowCount=0, subName="", rowCount=5):
+    def __init__(self, _rowCount=0, subName="", rowCount=5, gKey='-1'):
         super().__init__()
         self.rowCount = _rowCount
+        self.groupKey = gKey
         self.setWindowTitle(subName + " 그룹 관리")
         self.InitUi()
 
@@ -397,12 +543,27 @@ class GroupManager(QWidget):
 
         self.newButton.released.connect(self.AddItem)
 
-    def AddItem(self):
+        # 부관 정보 로딩
+        for key, data in manage.jsonData['Stickers'][self.groupKey]['characters'].items():
+            chaName = ""
+            if 'CharacterName' in data:
+                chaName = data["CharacterName"]
+            self.AddItem(chaName=chaName, chaKey=key)
+
+    def AddItem(self, chaName=None, chaKey=None):
+        print("AddItem")
         self.rowCount += 1
         self.table.setRowCount(self.rowCount)
 
-        # 프리셋 생성
-        group = GroupItem(self, "부관 " + str(self.rowCount), True)
+        # 부관 이름이 따로 정해지지 않았으면 번호로 지정
+        if not chaName:
+            chaName = "부관 " + str(self.rowCount)
+
+        # 그룹 키가 따로 정해지지 않았으면 적당한 번호를 가져옴
+        if not chaKey:
+            chaKey = manage.findProperChaKey(self.groupKey)
+
+        group = GroupItem(self, "부관 " + str(self.rowCount), True, ckey=chaKey)
         self.groupItems.append(group)
 
         # 표에 초기 데이터 할당
@@ -413,22 +574,52 @@ class GroupManager(QWidget):
         self.table.setCellWidget(idx, 3, group.manageButton)
         self.table.setCellWidget(idx, 4, group.deleteButton)
 
-        # groupUis에 데이터 추가
-        # manage.groupUis.append(None)
+        # 스티커에 초기 부관 데이터 할당
+        data = {
+            chaKey: {
+                "CharacterName": chaName,
+                "Position": [0, 0],  # 위치
+                "depth": idx,  # 놓인 순서
+                "CharacterImage": "",
+                "LoginVoiceFiles": [""],
+                "IdleVoiceFiles": [""],
+                "CharacterSize": 800,
+                "SizeRestrict": False,
+                "VoiceVolume": 50
+            }
+        }
+
+        manage.jsonData['Stickers'][self.groupKey]["characters"].update(data)
+
+        print(self.groupItems)
+        print(manage.jsonData['Stickers'][self.groupKey]['characters'])
+
+        manage.thereIsSomethingToSave()
 
     def DeleteItem(self):
-        currentRow = self.table.currentRow()
-        print(currentRow)
+        print("DeleteItem")
+        currentRow = self.table.currentRow()        # 표에서 선택한 행
+        chaKey = self.groupItems[currentRow].chaKey # 해당 그룹의 키 번호
+
         self.table.removeRow(currentRow)
         self.rowCount -= 1
-        del self.groupItems[currentRow]
-        # del manage.groupUis[currentRow]
+        del self.groupItems[currentRow]                                         # 표에서 제거
+        del manage.jsonData['Stickers'][self.groupKey]['characters'][chaKey]    # jsonData 수정
+
+        # 실행중인 스티커라면 스티커 객체에 삭제해달라고 요청
+        if self.groupKey == manage.presetKey:
+            manage.currentSticker.characterQuit()
+
+        print(self.groupItems)
+        print(manage.jsonData['Stickers'][self.groupKey]['characters'])
+        manage.thereIsSomethingToSave()
 
     def closeEvent(self, event):
-        manage.closeGroupUi(self)
+        manage.closeGroupUi(self.groupKey)
 
 class GroupItem:
     chaName = ""
+    chaKey = '-1'
     state = False
     stateString = ""
     hideButton = None
@@ -439,10 +630,11 @@ class GroupItem:
     chaNameItem = None
     stateItem = None
 
-    def __init__(self, p, _chaName, _state):
+    def __init__(self, p, _chaName, _state, ckey):
         self.parent = p
         self.chaName = _chaName
         self.state = _state
+        self.chaKey = ckey
         if _state:
             self.stateString = "업무 중"
             self.hideButton = QPushButton("숨기기")
@@ -472,16 +664,13 @@ class GroupItem:
             self.stateItem.setText(self.stateString)
             self.hideButton.setText("숨기기")
 
-    def findMyIndex(self):
-        if self in self.parent.groupItems:
-            idx = self.parent.groupItems.index(self)
-            return idx
-
     def openSettingUi(self):
-        pass
+        manage.openSettingUi(self.parent.groupKey, self.chaKey)
+
 
 class PresetManager(QWidget):
     rowCount = 0
+    currentGroup = 0
     table = None
     presetItems = []
 
@@ -491,9 +680,10 @@ class PresetManager(QWidget):
         self.setWindowTitle("전체 부관")
         self.InitUi()
 
+    # UI 설정
     def InitUi(self):
         # 위젯 추가
-        self.newButton = QPushButton("새 그룹 추가") # 그룹 추가 버튼 위젯
+        self.newButton = QPushButton("프리셋 추가") # 그룹 추가 버튼 위젯
         self.table = QTableWidget(self) # 테이블 위젯
 
         # 위젯 설정
@@ -523,12 +713,29 @@ class PresetManager(QWidget):
 
         self.newButton.released.connect(self.AddItem)
 
-    def AddItem(self):
+        # 프리셋 데이터 로딩
+        for key, data in manage.jsonData['Stickers'].items():
+            groupName = None
+            if 'GroupName' in data['options']:
+                groupName = data['options']['GroupName']
+            self.AddItem(groupName=groupName, gKey=key)
+
+
+    # "새 그룹 추가" 버튼 클릭 시 작동
+    def AddItem(self, groupName=None, gKey=None):
         self.rowCount += 1
         self.table.setRowCount(self.rowCount)
 
+        # 프리셋 이름이 따로 정해지지 않았으면 번호로 지정
+        if not groupName:
+            groupName = "프리셋 " + str(self.rowCount)
+
+        # 그룹 키가 따로 정해지지 않았으면 적당한 번호를 가져옴
+        if not gKey:
+            gKey = manage.findProperGroupKey()
+
         # 프리셋 생성
-        preset = PresetItem(self, "프리셋 " + str(self.rowCount), True)
+        preset = PresetItem(self, groupName, True, gKey=gKey)
         self.presetItems.append(preset)
 
         # 표에 초기 데이터 할당
@@ -540,18 +747,50 @@ class PresetManager(QWidget):
         self.table.setCellWidget(idx, 4, preset.deleteButton)
 
         # groupUis에 데이터 추가
-        manage.groupUis.append(None)
+        manage.groupUis[gKey] = None
 
-    def DeleteItem(self):
+        # 새로운 프리셋이면 jsonData에 추가
+        if gKey not in manage.jsonData['Stickers']:
+            newData = {
+                gKey: {
+                    'options': {
+                        "GroupName": groupName,
+                        "AlwaysOnTop": False,  # 항상 위에
+                    },
+                    'characters': {}
+                }
+            }
+            manage.stickerSave(newData)
+
+        manage.thereIsSomethingToSave()
+
+    # "불러오기" 버튼 클릭 시 작동
+    def changeState(self):
         currentRow = self.table.currentRow()
-        print(currentRow)
-        self.table.removeRow(currentRow)
+        for preset in self.presetItems:
+            if preset.state is True:
+                preset.changeState()
+
+        self.presetItems[currentRow].changeState()
+
+    # "삭제" 버튼 클릭 시 작동
+    def DeleteItem(self):
+        currentRow = self.table.currentRow()                # 선택한 행
+        groupKey = self.presetItems[currentRow].groupKey    # 선택한 행의 그룹 키 번호
+        self.table.removeRow(currentRow)                    # 표에서 제거
         self.rowCount -= 1
-        del self.presetItems[currentRow]
-        del manage.groupUis[currentRow]
+        manage.deleteGroupUi(groupKey)          # GroupUI 딕셔너리에서 삭제
+        del self.presetItems[currentRow]        # presetItems 리스트에서 삭제
+        del manage.jsonData['Stickers'][groupKey]   # jsonData에서 삭제
+
+        manage.thereIsSomethingToSave()
+
+    def __del__(self):
+        print("PresetManager 삭제됨")
 
 class PresetItem:
     groupName = ""
+    groupKey = None
     state = False
     stateString = ""
     callButton = None
@@ -561,10 +800,12 @@ class PresetItem:
 
     groupNameItem = None
     stateItem = None
+    stateChangeEvent = pyqtSignal()
 
-    def __init__(self, p, _groupName, _state):
+    def __init__(self, p, _groupName, _state, gKey):
         self.parent = p
         self.groupName = _groupName
+        self.groupKey = gKey
         self.state = _state
         if _state:
             self.stateString = "업무 중"
@@ -578,9 +819,15 @@ class PresetItem:
         self.stateItem = QTableWidgetItem(self.stateString)
 
         # 이벤트 설정
-        self.callButton.released.connect(self.changeState)
+        self.callButton.released.connect(self.callButtonHandler)
         self.manageButton.released.connect(self.openGroupUi)
         self.deleteButton.released.connect(self.parent.DeleteItem)
+
+    def callButtonHandler(self):
+        if self.state: # 업무 해제 버튼일 경우 혼자 꺼짐
+            self.changeState()
+        else: # 불러오기 버튼일 경우 켜져있는 다른 프리셋이 꺼지고 이게 켜짐
+            self.parent.changeState()
 
     def changeState(self):
         print("change")
@@ -595,15 +842,10 @@ class PresetItem:
             self.stateItem.setText(self.stateString)
             self.callButton.setText("업무 해제")
 
-    def findMyIndex(self):
-        if self in self.parent.presetItems:
-            idx = self.parent.presetItems.index(self)
-            return idx
-
     def openGroupUi(self):
-        idx = self.findMyIndex()
-        print(idx)
-        manage.openGroupUi(idx, subName=self.groupName)
+        manage.openGroupUi(groupKey=self.groupKey)
+
+
 
 
 # 크기 조절, 회전을 맡는 UI인데 개편작업으로 삭제
