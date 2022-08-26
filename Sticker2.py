@@ -1,6 +1,6 @@
 import os, sys, random, time, subprocess
 from PyQt5.QtWidgets import *
-from PyQt5.QtCore import QThread, pyqtSignal, QSize, Qt, pyqtSlot
+from PyQt5.QtCore import QThread, pyqtSignal, QSize, Qt, pyqtSlot, QObject, QEvent
 from PyQt5.QtGui import QIcon, QCursor, QIntValidator, QMovie, QPixmap
 from PIL import Image, ImageQt
 from pygame import mixer
@@ -30,11 +30,11 @@ class Loading(QWidget):
         self.loadLabel.setPixmap(self.loadPix)
 
 
-class Sticker(QMainWindow):
-    key = -1 # 그룹 번호
-    managerObj = None # ManageWindow 객체
-    stickerManager = None # StickerManager 객체
-    AlwaysOnTop = True # 항상 위
+class Sticker(QWidget):
+    key = -1  # 그룹 번호
+    managerObj = None  # ManageWindow 객체
+    stickerManager = None  # StickerManager 객체
+    AlwaysOnTop = False  # 항상 위
 
     # chaFile = ""
     # isSizeRestricted = False
@@ -43,51 +43,57 @@ class Sticker(QMainWindow):
     # loginVoiceFile = []
     # idleVoiceFile = []
     # voiceVolume = 50
-    # voiceSound = None
+    voiceSound = None
 
     stickers = {}
     '''
     {
-        '0' : {
-            "Position": [-19, 80],  # 위치
-            "depth": 0,             # 놓인 순서
-            "CharacterImage": "C:/Users/CheeseCake/PycharmProjects/pythonProject/LastOrigin/Sticker/character/BR_Andvari_0_O_S.webp",
-            "LoginVoiceFiles": [
-                "C:/Users/CheeseCake/PycharmProjects/pythonProject/LastOrigin/Sticker/voice/BR_Andvari_Login.mp3"
-            ],
-            "IdleVoiceFiles": [
-                "C:/Users/CheeseCake/PycharmProjects/pythonProject/LastOrigin/Sticker/voice/BR_Andvari_SPIdle_02_01.mp3"
-            ],
-            "CharacterSize": 800,
-            "SizeRestrict": false,
-            "VoiceVolume": 50
+        'options': {
+            "AlwaysOnTop": False
+        },
+        'characters': {
+            '0' : {
+                "Position": [-19, 80],  # 위치
+                "Depth": 0,             # 놓인 순서
+                "CharacterImage": ".../Sticker/character/BR_Andvari_0_O_S.webp",
+                "LoginVoiceFiles": [
+                    ".../Sticker/voice/BR_Andvari_Login.mp3"
+                ],
+                "IdleVoiceFiles": [
+                    ".../Sticker/voice/BR_Andvari_SPIdle_02_01.mp3"
+                ],
+                "CharacterSize": 800,
+                "SizeRestrict": false,
+                "VoiceVolume": 50
+            }
         }
         ...
     }
     '''
+    labels = {} # {'0' : {QLabel 객체}, ... }
 
     # 마우스 관련
-    m_flag = False
-    m_Position = None
+    m_flag = False      # 캐릭터를 클릭했는지
+    m_Position = None   # 마우스 위치
+    m_distance = 0   # 마우스 이동거리
 
     SettingWindow = None
-    clickTime = 0 # 마우스 클릭한 시간에 따라 보이스를 출력하거나 캐릭터를 이동시키거나.
+    clickTime = 0  # 마우스 클릭한 시간에 따라 보이스를 출력하거나 캐릭터를 이동시키거나.
 
     saveEvent = pyqtSignal(dict)
     assignEvent = pyqtSignal(str, object)
-    manageEvent = pyqtSignal() # 부관 설정창 열기
-    groupEvent = pyqtSignal() # 그룹 설정창 열기
-    presetEvent = pyqtSignal() # 프리셋 설정창 열기
-    removeEvent = pyqtSignal(str) # 부관 업무에서 해제
-    quitEvent = pyqtSignal() # 프로그램 종료
+    manageEvent = pyqtSignal()  # 부관 설정창 열기
+    groupEvent = pyqtSignal()  # 그룹 설정창 열기
+    presetEvent = pyqtSignal()  # 프리셋 설정창 열기
+    removeEvent = pyqtSignal(str)  # 부관 업무에서 해제
+    quitEvent = pyqtSignal()  # 프로그램 종료
 
-    def __init__(self, manager, data, key, AoT):
+    def __init__(self, manager, data, key):
         super().__init__()
         self.managerObj = manager # StickerManager 객체
         self.stickers = data
         self.readDataFile(data)
         self.key = key
-        self.AlwaysOnTop = AoT
 
         self.setWindowTitle("라오 부관")
         self.setWindowIcon(QIcon(iconPath))
@@ -112,35 +118,41 @@ class Sticker(QMainWindow):
         self.menu_quit = self.cmenu.addAction("종료")
 
         self.setupWindow()
+        
+        print("스티커 오픈")
 
     def readDataFile(self, jsonData):
         if jsonData:
             try:
                 # 데이터 검증
-                for key in jsonData:
-                    if "Position" in jsonData:
-                        if len(jsonData["Position"]) == 2: # 좌표계이므로 값이 2개인지
-                            self.stickers[key]["Position"] = jsonData["Position"]
+                if "AlwaysOnTop" in jsonData['options']:
+                    self.AlwaysOnTop = jsonData['options']['AlwaysOnTop']
+                for key, data in jsonData['characters'].items():
+                    if "Position" in data:
+                        if len(data["Position"]) == 2:  # 좌표계이므로 값이 2개인지
+                            self.stickers['characters'][key]["Position"] = data["Position"]
                         else:
-                            self.stickers[key]["Position"] = [0, 0]
-                    if "Depth" in jsonData:
-                        self.stickers[key]["Depth"] = jsonData["Depth"]
-                    if 'CharacterImage' in jsonData:
-                        if os.path.exists(jsonData['CharacterImage']):
-                            self.stickers[key]["CharacterImage"] = jsonData['CharacterImage']
+                            self.stickers['characters'][key]["Position"] = [0, 0]
+                    if "Depth" in data:
+                        self.stickers['characters'][key]["Depth"] = data["Depth"]
+                    if 'CharacterImage' in data:
+                        if os.path.exists(data['CharacterImage']):
+                            self.stickers['characters'][key]["CharacterImage"] = data['CharacterImage']
                         else:
-                            self.stickers[key]["CharacterImage"] = ""
-                    if 'LoginVoiceFiles' in jsonData:
-                        self.stickers[key]['LoginVoiceFiles'] = jsonData['LoginVoiceFiles']
-                    if 'IdleVoiceFiles' in jsonData:
-                        self.stickers[key]['IdleVoiceFiles'] = jsonData['IdleVoiceFiles']
-                    if 'SizeRestrict' in jsonData:
-                        self.stickers[key]['SizeRestrict'] = jsonData['SizeRestrict']
-                    if 'CharacterSize' in jsonData:
-                        self.stickers[key]['CharacterSize'] = jsonData['CharacterSize']
-                    if 'VoiceVolume' in jsonData:
-                        self.stickers[key]['VoiceVolume'] = jsonData['VoiceVolume']
-                    self.setCharacter(data=jsonData[key], key=key)
+                            self.stickers['characters'][key]["CharacterImage"] = ""
+                    if 'LoginVoiceFiles' in data:
+                        self.stickers['characters'][key]['LoginVoiceFiles'] = data['LoginVoiceFiles']
+                    if 'IdleVoiceFiles' in data:
+                        self.stickers['characters'][key]['IdleVoiceFiles'] = data['IdleVoiceFiles']
+                    if 'SpecialVoiceFiles' in data:
+                        self.stickers['characters'][key]['SpecialVoiceFiles'] = data['SpecialVoiceFiles']
+                    if 'SizeRestrict' in data:
+                        self.stickers['characters'][key]['SizeRestrict'] = data['SizeRestrict']
+                    if 'CharacterSize' in data:
+                        self.stickers['characters'][key]['CharacterSize'] = data['CharacterSize']
+                    if 'VoiceVolume' in data:
+                        self.stickers['characters'][key]['VoiceVolume'] = data['VoiceVolume']
+                    self.setCharacter(data=data, key=key)
             except Exception as e:
                 print("read Exception: " + str(e))
                 self.stickers = {}
@@ -150,9 +162,10 @@ class Sticker(QMainWindow):
         for key in data:
             if "chaLabel" in data[key]:
                 del data[key]['chaLabel']
-        self.saveEvent.emit({self.key : data})
+        self.saveEvent.emit({self.key: data})
 
     # Sticker 이미지 생성
+    # Sticker 클릭 이벤트 설정
     def setCharacter(self, data, key):
         try:
             chaLabel = QLabel('', self)
@@ -207,29 +220,139 @@ class Sticker(QMainWindow):
                 pilImage_resize = pilImage.resize((width, height), Image.Resampling.LANCZOS)
                 chaLabel.setPixmap(ImageQt.toqpixmap(pilImage_resize))
 
-            self.stickers[key]['chaLabel'] = chaLabel
+            # 클릭 이벤트 설정
+            self.clickable(chaLabel, key, QEvent.MouseButtonPress, Qt.LeftButton).connect(self.stickerMousePressEvent)
+            self.clickable(chaLabel, key, QEvent.MouseMove, Qt.LeftButton).connect(self.stickerMouseMoveEvent)
+            self.clickable(chaLabel, key, QEvent.MouseButtonRelease, Qt.LeftButton).connect(self.stickerMouseReleaseEvent)
+
+            self.labels[key] = chaLabel
+            print(dir(QEvent))
 
         except Exception as e:
             print("Character Exception: " + str(e))
 
-    def loginVoicePlay(self, voiceIndex=0):
-        # loginVoice 목록이 존재하는가
-        loginVoiceFile = []
-        for key in self.stickers:
-            loginVoiceFile += self.stickers[key]['LoginVoiceFiles']
+    # 클릭 이벤트필터 정의
+    def clickable(self, widget, key, eventType, buttonType):
+        class Filter(QObject):
+            clicked = pyqtSignal(object, str)
+            chaKey = key
 
-        if not loginVoiceFile:
+            def eventFilter(self, obj, event):
+                if obj == widget:
+                    # print(obj, event)
+                    if event.type() == eventType:
+                        self.clicked.emit(event, self.chaKey)
+                        return True
+                return False
+
+        filter = Filter(widget)
+        widget.installEventFilter(filter)
+        return filter.clicked
+
+    def stickerMousePressEvent(self, event, key):
+        self.clickTime = time.time()
+        self.m_flag = True
+        # self.m_Position = event.globalPos() - self.pos()  # Get the position of the mouse relative to the window
+        self.m_Position = event.globalPos()  # Get the position of the mouse relative to the window
+        event.accept()  # 클릭이벤트를 처리하고 종료. ignore 시 부모위젯으로 이벤트가 넘어감
+        self.setCursor(QCursor(Qt.OpenHandCursor))  # Change mouse icon
+
+    def stickerMouseMoveEvent(self, event, key):
+        if Qt.LeftButton and self.m_flag:
+            value = event.globalPos() - self.m_Position  # Change window position
+            print((value.x() ** 2 + value.y() ** 2) ** 0.5)
+
+            self.m_distance += (value.x() ** 2 + value.y() ** 2) ** 0.5
+            self.m_Position = event.globalPos()
+            if self.m_distance > 200:
+                self.specialVoicePlay(key)
+                self.m_flag = False
+                self.m_distance = 0
+                # self.setCursor(QCursor(Qt.ArrowCursor))
+            # if time.time() - self.clickTime > 0.8:
+            #     self.specialVoicePlay(key)
+            event.accept()
+
+    def stickerMouseReleaseEvent(self, event, key):
+        if self.m_flag:
+            if time.time() - self.clickTime < 0.4:
+                self.idleVoicePlay(key)
+
+        # self.writeDataFile()
+        self.m_flag = False
+        self.setCursor(QCursor(Qt.ArrowCursor))
+        event.accept()
+
+    def loginVoicePlay(self):
+        # 보이스가 존재하는 캐릭터만 솎아내기
+        loginVoiceFiles = {}
+        for key, data in self.stickers['characters'].items():
+            if data["LoginVoiceFiles"]:
+                loginVoiceFiles[key] = data["LoginVoiceFiles"]
+
+        # 보이스가 단 한개도 없는 경우
+        if not loginVoiceFiles:
             return
 
-        # voiceIndex가 -1이면 랜덤재생
-        if voiceIndex == -1:
-            voiceIndex = random.randrange(0, len(loginVoiceFile))
+        # 랜덤 캐릭터 선택
+        print(list(loginVoiceFiles.keys()))
+        randomKey = random.choice(list(loginVoiceFiles.keys()))
+        print(randomKey)
 
-        # 인덱스가 크기를 벗어나진 않는가, 보이스 파일이 존재하는가
-        # 보이스 파일이 없으면 접속 보이스가 나오지 않음
-        if voiceIndex >= len(loginVoiceFile) or os.path.exists(loginVoiceFile[voiceIndex]) is False:
+        # 랜덤 보이스 선택
+        voiceFile = random.choice(loginVoiceFiles[randomKey])   # 랜덤 보이스
+
+        # 선택된 보이스 파일이 존재하지 않는 경우
+        if os.path.exists(voiceFile) is False:
             return
 
+        # 보이스 볼륨
+        voiceVolume = self.stickers['characters'][randomKey]['VoiceVolume']
+
+        # 재생
+        self.soundPlay(voiceFile, voiceVolume)
+
+    def idleVoicePlay(self, key):
+        idleVoiceFile = self.stickers['characters'][key]['IdleVoiceFiles']
+
+        # 해당 캐릭터의 보이스가 없는 경우
+        if not idleVoiceFile:
+            return
+
+        # 랜덤 보이스 선택
+        voiceFile = random.choice(idleVoiceFile)
+
+        # 해당 보이스 파일이 경로에 없는 경우
+        if os.path.exists(voiceFile) is False:
+            return
+
+        # 보이스 볼륨
+        voiceVolume = self.stickers['characters'][key]['VoiceVolume']
+
+        # 재생
+        self.soundPlay(voiceFile, voiceVolume)
+
+    def specialVoicePlay(self, key):
+        specialVoiceFile = self.stickers['characters'][key]['SpecialVoiceFiles']
+
+        # 해당 캐릭터의 보이스가 없는 경우
+        if not specialVoiceFile:
+            return
+
+        # 랜덤 보이스 선택
+        voiceFile = random.choice(specialVoiceFile)
+
+        # 해당 보이스 파일이 경로에 없는 경우
+        if os.path.exists(voiceFile) is False:
+            return
+
+        # 보이스 볼륨
+        voiceVolume = self.stickers['characters'][key]['VoiceVolume']
+
+        # 재생
+        self.soundPlay(voiceFile, voiceVolume)
+
+    def soundPlay(self, soundFile, soundVolume):
         try:
             if self.voiceSound is not None:
                 self.voiceSound.stop()
@@ -241,62 +364,41 @@ class Sticker(QMainWindow):
 
             # default : pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=4096)
             mixer.init(freq, bitsize, channels, buffer)
-            self.voiceSound = mixer.Sound(loginVoiceFile[voiceIndex])
-            self.voiceSound.set_volume(self.voiceVolume / 100)
-            self.voiceSound.play()
-
-        except Exception as e:
-            print("LoginVoice Exception: " + str(e))
-
-    def idleVoicePlay(self, voiceIndex=0):
-        if self.idleVoiceFile == [] or voiceIndex >= len(self.idleVoiceFile) or os.path.exists(self.idleVoiceFile[voiceIndex]) is False:
-            return
-
-        try:
-            if self.voiceSound is not None:
-                self.voiceSound.stop()
-
-            freq = 44100  # sampling rate, 44100(CD), 16000(Naver TTS), 24000(google TTS)
-            bitsize = -16  # signed 16 bit. support 8,-8,16,-16
-            channels = 2  # 1 is mono, 2 is stereo
-            buffer = 2048  # number of samples (experiment to get right sound)
-
-            # default : pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=4096)
-            mixer.init(freq, bitsize, channels, buffer)
-            self.voiceSound = mixer.Sound(self.idleVoiceFile[voiceIndex])
-            self.voiceSound.set_volume(self.voiceVolume / 100)
+            self.voiceSound = mixer.Sound(soundFile)
+            self.voiceSound.set_volume(soundVolume / 100)
             self.voiceSound.play()
 
         except Exception as e:
             print("IdleVoice Exception: " + str(e))
 
-    # MOUSE Click drag EVENT function
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clickTime = time.time()
-            self.m_flag = True
-            self.m_Position = event.globalPos() - self.pos()  # Get the position of the mouse relative to the window
-            event.accept()
-            self.setCursor(QCursor(Qt.OpenHandCursor))  # Change mouse icon
-
-    def mouseMoveEvent(self, QMouseEvent):
-        if Qt.LeftButton and self.m_flag:
-            self.move(QMouseEvent.globalPos() - self.m_Position)  # Change window position
-            QMouseEvent.accept()
-
-    def mouseReleaseEvent(self, QMouseEvent):
-        if self.m_flag:
-            if time.time() - self.clickTime < 0.4:
-                self.characterTouch()
+    # # MOUSE Click drag EVENT function
+    # def mousePressEvent(self, event):
+    #     print("클릭")
+    #     if event.button() == Qt.LeftButton:
+    #         for key, label in self.labels.items():
+    #             label.mousePressEvent = lambda event: print(event)
+    #             label.mousePressEvent("!!")
+    #             print(label.size())
+    #             label.move(0, 0)
+    #         self.clickTime = time.time()
+    #         self.m_flag = True
+    #         self.m_Position = event.globalPos() - self.pos()  # Get the position of the mouse relative to the window
+    #         event.accept()
+    #         self.setCursor(QCursor(Qt.OpenHandCursor))  # Change mouse icon
+    #
+    # def mouseMoveEvent(self, QMouseEvent):
+    #     if Qt.LeftButton and self.m_flag:
+    #         self.move(QMouseEvent.globalPos() - self.m_Position)  # Change window position
+    #         QMouseEvent.accept()
+    #
+    # def mouseReleaseEvent(self, QMouseEvent):
+    #     if self.m_flag:
+    #         if time.time() - self.clickTime < 0.4:
+    #             self.characterTouch()
 
         self.writeDataFile()
         self.m_flag = False
         self.setCursor(QCursor(Qt.ArrowCursor))
-
-    def characterTouch(self):
-        if self.idleVoiceFile:
-            voiceIndex = random.randrange(0, len(self.idleVoiceFile))
-            self.idleVoicePlay(voiceIndex)
 
     def stickerHide(self):
         self.hide()
@@ -308,8 +410,8 @@ class Sticker(QMainWindow):
         pass
 
     def setupWindow(self):
-        centralWidget = QWidget(self)
-        self.setCentralWidget(centralWidget)
+        # centralWidget = QWidget(self)
+        # self.setCentralWidget(centralWidget)
 
         if self.AlwaysOnTop:
             self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -317,27 +419,29 @@ class Sticker(QMainWindow):
             self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.show()
 
     def contextMenuEvent(self, event):
         action = self.cmenu.exec_(self.mapToGlobal(event.pos()))
-        if action == self.menu_hide: # 숨기기
+        if action == self.menu_hide:  # 숨기기
             self.stickerHide()
-        elif action == self.menu_setting: # 부관 설정
+        elif action == self.menu_setting:  # 부관 설정
             self.openSetting()
-        elif action == self.menu_group: # 그룹 설정
+        elif action == self.menu_group:  # 그룹 설정
             self.groupEvent.emit()
-        elif action == self.menu_preset: # 프리셋 설정
+        elif action == self.menu_preset:  # 프리셋 설정
             self.presetEvent.emit()
-        elif action == self.menu_manage: # 위젯 설정
+        elif action == self.menu_manage:  # 위젯 설정
             self.manageEvent.emit()
-        elif action == self.menu_retire: # 부관 임무에서 해제
+        elif action == self.menu_retire:  # 부관 임무에서 해제
             self.removeEvent.emit(self.key)
-        elif action == self.menu_quit: # 종료
+        elif action == self.menu_quit:  # 종료
             self.quitEvent.emit()
 
     def openSetting(self):
         self.stickerManager.openSettingUi(self.key, self.chaKey)
+    
+    def closeEvent(self, *args, **kwargs):
+        print("스티커 종료")
 
 
 # 부관 설정창
@@ -348,6 +452,7 @@ class SettingWindow(QDialog, QWidget):
 
     loginVoiceFile = []
     idleVoiceFile = []
+    specialVoiceFile = []
 
     convertTh = None
     '''
@@ -382,6 +487,7 @@ class SettingWindow(QDialog, QWidget):
         self.chaButton.clicked.connect(self.setCharacter)
         self.loginVoiceButton.clicked.connect(self.setLoginVoice)
         self.idleVoiceButton.clicked.connect(self.setIdleVoice)
+        self.specialVoiceButton.clicked.connect(self.setSpecialVoice)
         self.applyButton.clicked.connect(self.applySetting)
         self.cancelButton.clicked.connect(self.closeSetting)
 
@@ -389,7 +495,7 @@ class SettingWindow(QDialog, QWidget):
         self.chaSizeLine.setValidator(self.onlyInt)
 
     def initUI(self):
-        ### 위젯 생성 ###
+        # 위젯 생성
         # 항상 위에 고정 체크박스
         self.AOTCheckBox = QCheckBox("항상 위에 고정")
 
@@ -407,6 +513,8 @@ class SettingWindow(QDialog, QWidget):
         self.loginVoice_label = QLabel("")
         self.idleVoiceButton = QPushButton("일반 대사")
         self.idleVoice_label = QLabel("")
+        self.specialVoiceButton = QPushButton("특수 대사")
+        self.specialVoice_label = QLabel("")
         self.volumeLabel = QLabel("볼륨")
         self.voiceSlider = QSlider()
 
@@ -453,6 +561,13 @@ class SettingWindow(QDialog, QWidget):
         voice_HBL2_widget.setLayout(voice_HBL2)
         voice_HBL2.setContentsMargins(0, 0, 0, 0)
 
+        voice_HBL4_widget = QWidget()
+        voice_HBL4 = QHBoxLayout()
+        voice_HBL4.addWidget(self.specialVoiceButton, alignment=Qt.AlignLeft)
+        voice_HBL4.addWidget(self.specialVoice_label)
+        voice_HBL4_widget.setLayout(voice_HBL4)
+        voice_HBL4.setContentsMargins(0, 0, 0, 0)
+
         voice_HBL3_widget = QWidget()
         voice_HBL3 = QHBoxLayout()
         voice_HBL3.addWidget(self.volumeLabel, alignment=Qt.AlignLeft)
@@ -463,6 +578,7 @@ class SettingWindow(QDialog, QWidget):
         voiceVBox = QVBoxLayout()
         voiceVBox.addWidget(voice_HBL1_widget, alignment=Qt.AlignLeft)
         voiceVBox.addWidget(voice_HBL2_widget, alignment=Qt.AlignLeft)
+        voiceVBox.addWidget(voice_HBL4_widget, alignment=Qt.AlignLeft)
         voiceVBox.addWidget(voice_HBL3_widget, alignment=Qt.AlignLeft)
         self.voiceGroupBox.setLayout(voiceVBox)
 
@@ -506,11 +622,12 @@ class SettingWindow(QDialog, QWidget):
     def setParent(self, p):
         self.parent = p
 
-    def setSetting(self, chaFile, loginVoiceList, idleVoiceList, chaSize, voiceV,
+    def setSetting(self, chaFile, loginVoiceList, idleVoiceList, specialVoiceList, chaSize, voiceV,
                    isSizeRestricted):
         self.chaFile = chaFile
         self.loginVoiceFile = loginVoiceList
         self.idleVoiceFile = idleVoiceList
+        self.specialVoiceFile = specialVoiceList
         self.chaLabel.setText(chaFile.split("/")[-1])
         self.chaSizeLine.setText(str(chaSize))
         self.voiceSlider.setValue(voiceV)
@@ -520,6 +637,7 @@ class SettingWindow(QDialog, QWidget):
 
         self.loginVoice_label.setText("(%d개 설정됨)" % len(self.loginVoiceFile))
         self.idleVoice_label.setText("(%d개 설정됨)" % len(self.idleVoiceFile))
+        self.specialVoice_label.setText("(%d개 설정됨)" % len(self.specialVoiceFile))
 
     # 컨버트 도중 다른 조작 못하게 막는 조치 해아함
     # 설정 창을 닫는 행위
@@ -586,6 +704,12 @@ class SettingWindow(QDialog, QWidget):
         if fname[0]:
             self.idleVoiceFile = fname[0]
             self.idleVoice_label.setText("(%d개 설정됨)" % len(self.idleVoiceFile))
+
+    def setSpecialVoice(self):
+        fname = QFileDialog.getOpenFileNames(self, "특수터치 대사 선택", "./voice", "Audio File(*.mp3 *.wav)")
+        if fname[0]:
+            self.specialVoiceFile = fname[0]
+            self.specialVoice_label.setText("(%d개 설정됨)" % len(self.specialVoiceFile))
 
     def applySetting(self):
         self.accept()
