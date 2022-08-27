@@ -94,6 +94,7 @@ class StickerManager(QMainWindow):
         "CharacterName": "",
         "Position": [0, 0],  # 위치
         "Depth": 0,  # 놓인 순서
+        "Visible": True,
         "CharacterImage": "",
         "LoginVoiceFiles": [],
         "IdleVoiceFiles": [],
@@ -129,17 +130,20 @@ class StickerManager(QMainWindow):
 
         # 트레이 메뉴 설정
         manage_action = QAction("홈 열기", self)
+        group_action = QAction("현재 그룹 열기", self)
         preset_action = QAction("프리셋 열기", self)
         hide_action = QAction("숨기기", self)
         call_action = QAction("숨김 해제", self)
         quit_action = QAction("종료", self)
         manage_action.triggered.connect(self.openManageUi)
+        group_action.triggered.connect(self.openGroupUi)
         preset_action.triggered.connect(self.openPresetUi)
         hide_action.triggered.connect(self.hideGroup)
         call_action.triggered.connect(self.callGroup)
         quit_action.triggered.connect(self.programQuit)
         tray_menu = QMenu()
         tray_menu.addAction(manage_action)
+        tray_menu.addAction(group_action)
         tray_menu.addAction(preset_action)
         tray_menu.addAction(hide_action)
         tray_menu.addAction(call_action)
@@ -214,10 +218,13 @@ class StickerManager(QMainWindow):
                 self.openPresetUi()
 
     def loadSticker(self, data, key):
-        sticker = Sticker(self, data=data, key=key)
+        if self.currentSticker:
+            self.currentSticker.resetSticker(self, data=data, key=key)
+        else:
+            sticker = Sticker(self, data=data, key=key)
         self.currentSticker = sticker
-        sticker.showMaximized()
         self.presetKey = key
+        sticker.showMaximized()
         self.jsonData['PresetKey'] = key
         self.thereIsSomethingToSave()
 
@@ -354,7 +361,15 @@ class StickerManager(QMainWindow):
 
         self.manageUi.show()
 
-    def openGroupUi(self, groupKey):
+    def openGroupUi(self, groupKey=None):
+        # 트레이메뉴의 "현재 그룹 열기"는 groupKey가 False로 전달됨
+        # 이 경우 self.presetKey에 해당하는 그룹이 열리는데, 설정되어 있지 않으면면 UI 열지 않음
+        if not groupKey and not self.presetKey:
+            return
+
+        if not groupKey:
+            groupKey = self.presetKey
+
         subName = self.jsonData['Stickers'][groupKey]['options']['GroupName']
 
         if groupKey not in self.groupUis or self.groupUis[groupKey] is None:
@@ -530,7 +545,7 @@ class GroupManager(QWidget):
             self.rowCount += 1
             self.table.setRowCount(self.rowCount)
 
-            group = GroupItem(self, chaName, True, ckey=chaKey)
+            group = GroupItem(self, chaName, data["Visible"], ckey=chaKey)
             self.groupItems.append(group)
 
             # 표에 초기 데이터 할당
@@ -569,6 +584,7 @@ class GroupManager(QWidget):
                 "CharacterName": chaName,
                 "Position": [0, 0],  # 위치
                 "Depth": idx,  # 놓인 순서
+                "Visible": True,
                 "CharacterImage": "",
                 "LoginVoiceFiles": [],
                 "IdleVoiceFiles": [],
@@ -597,6 +613,26 @@ class GroupManager(QWidget):
             self.stickerManager.currentSticker.characterQuit()
 
         self.stickerManager.thereIsSomethingToSave()
+
+    def findRow(self, chaKey):
+        row = None
+        for idx, item in enumerate(self.groupItems):
+            if item.chaKey == chaKey:
+                row = idx
+                break
+        return row
+
+    def hideSticker(self, chaKey):
+        row = self.findRow(chaKey)
+
+        if row is not None:
+            self.groupItems[row].hideSticker()
+
+    def callSticker(self, chaKey):
+        row = self.findRow(chaKey)
+
+        if row is not None:
+            self.groupItems[row].callSticker()
 
     def setAlwaysOnTop(self):
         aot = self.AOTCheckBox.isChecked()
@@ -649,15 +685,33 @@ class GroupItem:
 
     def changeState(self):
         if self.state:
-            self.state = False
-            self.stateString = "숨김"
-            self.stateItem.setText(self.stateString)
-            self.hideButton.setText("숨김 해제")
+            self.hideSticker()
         else:
-            self.state = True
-            self.stateString = "업무 중"
-            self.stateItem.setText(self.stateString)
-            self.hideButton.setText("숨기기")
+            self.callSticker()
+
+    def hideSticker(self):
+        self.state = False
+        self.stateString = "숨김"
+        self.stateItem.setText(self.stateString)
+        self.hideButton.setText("숨김 해제")
+
+        if self.parent.groupKey == self.parent.stickerManager.presetKey:
+            sticker = self.parent.stickerManager.currentSticker
+            sticker.labels[self.chaKey].hide()
+            sticker.stickers['characters'][self.chaKey]["Visible"] = False
+            sticker.writeDataFile()
+
+    def callSticker(self):
+        self.state = True
+        self.stateString = "업무 중"
+        self.stateItem.setText(self.stateString)
+        self.hideButton.setText("숨기기")
+
+        if self.parent.groupKey == self.parent.stickerManager.presetKey:
+            sticker = self.parent.stickerManager.currentSticker
+            sticker.labels[self.chaKey].show()
+            sticker.stickers['characters'][self.chaKey]["Visible"] = True
+            sticker.writeDataFile()
 
     def openSettingUi(self):
         self.parent.stickerManager.openSettingUi(self.parent.groupKey, self.chaKey)
@@ -790,11 +844,14 @@ class PresetManager(QWidget):
 
     # "불러오기" 버튼 클릭 시 작동
     def changeState(self):
-        currentRow = self.table.currentRow()
+        # 켜진 거 찾아서 끄기
         for preset in self.presetItems:
             if preset.state is True:
                 preset.changeState()
 
+        # 불러오기 한 거 켜기
+        currentRow = self.table.currentRow()
+        print("currentRow : " + str(currentRow))
         self.presetItems[currentRow].changeState()
 
     # "삭제" 버튼 클릭 시 작동
@@ -819,6 +876,7 @@ class PresetItem:
     manageButton = None
     deleteButton = None
     parent = None
+    stickerManager = None
 
     groupNameItem = None
     stateItem = None
@@ -829,6 +887,7 @@ class PresetItem:
         self.groupName = _groupName
         self.groupKey = gKey
         self.state = _state
+        self.stickerManager = self.parent.stickerManager
         if _state:
             self.stateString = "업무 중"
             self.callButton = QPushButton("업무 해제")
@@ -840,25 +899,47 @@ class PresetItem:
         self.groupNameItem = QTableWidgetItem(self.groupName)
         self.stateItem = QTableWidgetItem(self.stateString)
 
-        # 로딩 때 스티커 안 켜졌을때
-        if self.state and self.parent.stickerManager.currentSticker is None:
-            self.openSticker()
-
         # 이벤트 설정
         self.callButton.released.connect(self.callButtonHandler)
         self.manageButton.released.connect(self.openGroupUi)
         self.deleteButton.released.connect(self.parent.DeleteItem)
 
-    def openSticker(self):
-        data = self.parent.stickerManager.jsonData['Stickers'][self.groupKey]
-        key = self.groupKey
-        self.parent.stickerManager.loadSticker(data, key)
-
     def callButtonHandler(self):
         if self.state:  # 업무 해제 버튼일 경우 혼자 꺼짐
-            self.changeState()
+            self.GetGroupOut()
         else:  # 불러오기 버튼일 경우 켜져있는 다른 프리셋이 꺼지고 이게 켜짐
-            self.parent.changeState()
+            # self.parent.changeState()
+
+            # 켜진 거 찾아서 끄기
+            for preset in self.parent.presetItems:
+                if preset.state is True:
+                    preset.GetGroupOut()
+
+            # 불러오기 한 거 켜기
+            currentRow = self.parent.table.currentRow()
+            print("currentRow : " + str(currentRow))
+            self.parent.presetItems[currentRow].GetGroupIn()
+
+    # 내보내기
+    def GetGroupOut(self):
+        self.state = False
+        self.stateString = ""
+        self.stateItem.setText(self.stateString)
+        self.callButton.setText("불러오기")
+        del self.stickerManager.currentSticker
+        # self.stickerManager.currentSticker.groupQuit()  # 스티커 종료
+        self.stickerManager.currentSticker = None  # 현재 스티커 = None
+        self.stickerManager.presetKey = None  # 현재 그룹 키 = None
+        self.stickerManager.thereIsSomethingToSave()
+
+    def GetGroupIn(self):
+        self.state = True
+        self.stateString = "업무 중"
+        self.stateItem.setText(self.stateString)
+        self.callButton.setText("업무 해제")
+        self.stickerManager.presetKey = self.groupKey
+        self.openSticker()  # 스티커 실행
+        self.stickerManager.thereIsSomethingToSave()
 
     def changeState(self):
         if self.state:  # 끄기
@@ -866,9 +947,9 @@ class PresetItem:
             self.stateString = ""
             self.stateItem.setText(self.stateString)
             self.callButton.setText("불러오기")
-            self.parent.stickerManager.currentSticker.groupQuit()  # 스티커 종료
-            self.parent.stickerManager.currentSticker = None  # 현재 스티커 = None
-            self.parent.stickerManager.presetKey = None  # 현재 그룹 키 = None
+            del self.stickerManager.currentSticker
+            # self.stickerManager.currentSticker.groupQuit()  # 스티커 종료
+            self.stickerManager.currentSticker = None  # 현재 스티커 = None
 
         else:  # 켜기
             self.state = True
@@ -877,8 +958,14 @@ class PresetItem:
             self.callButton.setText("업무 해제")
             self.openSticker()  # 스티커 실행
 
+    def openSticker(self):
+        data = self.stickerManager.jsonData['Stickers'][self.groupKey]
+        key = self.groupKey
+
+        self.stickerManager.loadSticker(data, key)
+
     def openGroupUi(self):
-        self.parent.stickerManager.openGroupUi(groupKey=self.groupKey)
+        self.stickerManager.openGroupUi(groupKey=self.groupKey)
 
 
 # 크기 조절, 회전을 맡는 UI인데 개편작업으로 삭제

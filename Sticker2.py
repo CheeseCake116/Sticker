@@ -55,6 +55,7 @@ class Sticker(QWidget):
             '0' : {
                 "Position": [-19, 80],  # 위치
                 "Depth": 0,             # 놓인 순서
+                "Visible": True,
                 "CharacterImage": ".../Sticker/character/BR_Andvari_0_O_S.webp",
                 "LoginVoiceFiles": [
                     ".../Sticker/voice/BR_Andvari_Login.mp3"
@@ -63,7 +64,7 @@ class Sticker(QWidget):
                     ".../Sticker/voice/BR_Andvari_SPIdle_02_01.mp3"
                 ],
                 "CharacterSize": 800,
-                "SizeRestrict": false,
+                "SizeRestrict": True,
                 "VoiceVolume": 50
             }
         }
@@ -78,7 +79,6 @@ class Sticker(QWidget):
     m_distance = 0   # 마우스 이동거리
 
     SettingWindow = None
-    clickTime = 0  # 마우스 클릭한 시간에 따라 보이스를 출력하거나 캐릭터를 이동시키거나.
 
     saveEvent = pyqtSignal(dict)
     manageEvent = pyqtSignal()  # 부관 설정창 열기
@@ -91,8 +91,9 @@ class Sticker(QWidget):
         super().__init__()
         self.stickerManager = manager  # StickerManager 객체
         self.stickers = data
-        self.readDataFile(data)
+        self.labels = {}  # 부관그룹을 교체했을 때, 어째서인지 서로 다른 객체인데 labels를 공유하는 현상이 발생해서 다시 초기화함
         self.key = key
+        self.readDataFile(data)
 
         self.setWindowTitle("라오 부관")
         self.setWindowIcon(QIcon(iconPath))
@@ -133,6 +134,8 @@ class Sticker(QWidget):
                             self.stickers['characters'][key]["Position"] = [0, 0]
                     if "Depth" in data:
                         self.stickers['characters'][key]["Depth"] = data["Depth"]
+                    if "Visible" in data:
+                        self.stickers['characters'][key]["Visible"] = data["Visible"]
                     if 'CharacterImage' in data:
                         if os.path.exists(data['CharacterImage']):
                             self.stickers['characters'][key]["CharacterImage"] = data['CharacterImage']
@@ -158,6 +161,14 @@ class Sticker(QWidget):
     def writeDataFile(self):
         self.saveEvent.emit({self.key: self.stickers})
 
+    # 다른 그룹 데이터를 불러옴
+    def resetSticker(self, data, key):
+        self.stickers = data
+        self.key = key
+        self.stickers = {}
+        self.labels = {}
+        self.readDataFile(data)
+
     # Sticker 이미지 생성
     # Sticker 클릭 이벤트 설정
     def setCharacter(self, data, key):
@@ -166,9 +177,11 @@ class Sticker(QWidget):
                 chaLabel = self.labels[key]
             else:
                 chaLabel = QLabel('', self)
+
             chaFile = data['CharacterImage']
             isSizeRestricted = data['SizeRestrict']
             chaSize = data['CharacterSize']
+            visible = data['Visible']
 
             # 파일이 존재하지 않는 경우
             if os.path.exists(chaFile) is False:
@@ -217,6 +230,10 @@ class Sticker(QWidget):
                 pilImage_resize = pilImage.resize((width, height), Image.Resampling.LANCZOS)
                 chaLabel.setPixmap(ImageQt.toqpixmap(pilImage_resize))
 
+            # 이미지 숨김 상태인지
+            if not visible:
+                chaLabel.hide()
+
             # 클릭 이벤트 설정
             self.clickable(chaLabel, key, QEvent.MouseButtonPress, Qt.LeftButton).connect(self.stickerMousePressEvent)
             self.clickable(chaLabel, key, QEvent.MouseMove, Qt.NoButton).connect(self.stickerMouseMoveEvent)
@@ -246,7 +263,6 @@ class Sticker(QWidget):
         return filter.clicked
 
     def stickerMousePressEvent(self, event, key):
-        self.clickTime = time.time()
         self.m_flag = True
         self.m_Position = event.globalPos() - self.labels[key].pos()
         event.accept()  # 클릭이벤트를 처리하고 종료. ignore 시 부모위젯으로 이벤트가 넘어감
@@ -265,6 +281,7 @@ class Sticker(QWidget):
                     self.specialVoicePlay(key)
                     self.m_flag = False
                     self.m_distance = 0
+                    self.setCursor(QCursor(Qt.ArrowCursor))
             event.accept()
 
     def stickerMouseReleaseEvent(self, event, key):
@@ -274,8 +291,7 @@ class Sticker(QWidget):
                 self.stickers['characters'][key]['Position'] = [pos.x(), pos.y()]
                 self.writeDataFile()
             else:
-                if time.time() - self.clickTime < 0.4:
-                    self.idleVoicePlay(key)
+                self.idleVoicePlay(key)
 
             self.m_flag = False
             self.setCursor(QCursor(Qt.ArrowCursor))
@@ -387,9 +403,19 @@ class Sticker(QWidget):
             print("IdleVoice Exception: " + str(e))
 
     def hideSticker(self, key):
-        self.labels[key].hide()
+        if self.key in self.stickerManager.groupUis and self.stickerManager.groupUis[self.key]:
+            self.stickerManager.groupUis[self.key].hideSticker(key)
+        else:
+            self.labels[key].hide()
+            self.stickers['characters'][key]["Visible"] = False
+            self.writeDataFile()
 
     def groupQuit(self):
+        for key, label in self.labels.items():
+            label.close()
+
+        self.labels = {}
+        self.stickers = {}
         self.close()
 
     def characterQuit(self, key):
