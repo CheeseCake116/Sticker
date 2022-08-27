@@ -81,16 +81,15 @@ class Sticker(QWidget):
     clickTime = 0  # 마우스 클릭한 시간에 따라 보이스를 출력하거나 캐릭터를 이동시키거나.
 
     saveEvent = pyqtSignal(dict)
-    assignEvent = pyqtSignal(str, object)
     manageEvent = pyqtSignal()  # 부관 설정창 열기
-    groupEvent = pyqtSignal()  # 그룹 설정창 열기
+    groupEvent = pyqtSignal(str)  # 그룹 설정창 열기
     presetEvent = pyqtSignal()  # 프리셋 설정창 열기
     removeEvent = pyqtSignal(str)  # 부관 업무에서 해제
     quitEvent = pyqtSignal()  # 프로그램 종료
 
     def __init__(self, manager, data, key):
         super().__init__()
-        self.managerObj = manager # StickerManager 객체
+        self.stickerManager = manager  # StickerManager 객체
         self.stickers = data
         self.readDataFile(data)
         self.key = key
@@ -99,27 +98,26 @@ class Sticker(QWidget):
         self.setWindowIcon(QIcon(iconPath))
         # self.move(0, 0) # 창 최대크기라서 할 필요 없을듯
 
-        self.saveEvent.connect(self.managerObj.stickerSave)
-        self.assignEvent.connect(self.managerObj.stickerAssign)
-        self.manageEvent.connect(self.managerObj.openManageUi)
-        # self.groupEvent.connect(self.managerObj.openGroupUi) # 그룹 기능 확정될때까지
-        self.presetEvent.connect(self.managerObj.openPresetUi)
-        self.removeEvent.connect(self.managerObj.stickerRemove)
-        self.quitEvent.connect(self.managerObj.programQuit)
+        self.saveEvent.connect(self.stickerManager.stickerSave)
+        self.manageEvent.connect(self.stickerManager.openManageUi)
+        self.groupEvent.connect(self.stickerManager.openGroupUi)
+        self.presetEvent.connect(self.stickerManager.openPresetUi)
+        self.removeEvent.connect(self.stickerManager.stickerRemove)
+        self.quitEvent.connect(self.stickerManager.programQuit)
 
         self.cmenu = QMenu(self)
         self.menu_setting = self.cmenu.addAction("부관 설정")
-        self.menu_group = self.cmenu.addAction("그룹 설정")
-        self.menu_preset = self.cmenu.addAction("프리셋 설정")
-        self.menu_hide = self.cmenu.addAction("숨기기")
-        self.menu_retire = self.cmenu.addAction("부관 업무에서 해제")
+        self.menu_move = self.cmenu.addAction("이동")
+        self.menu_move.setCheckable(True)
+        self.menu_hide = self.cmenu.addAction("잠시 숨기기")
+        self.menu_retire = self.cmenu.addAction("내보내기")
         self.cmenu.addSeparator()
+        self.menu_group = self.cmenu.addAction("그룹 설정")
+        self.menu_preset = self.cmenu.addAction("프리셋 관리")
         self.menu_manage = self.cmenu.addAction("위젯 설정")
         self.menu_quit = self.cmenu.addAction("종료")
 
         self.setupWindow()
-        
-        print("스티커 오픈")
 
     def readDataFile(self, jsonData):
         if jsonData:
@@ -158,17 +156,16 @@ class Sticker(QWidget):
                 self.stickers = {}
 
     def writeDataFile(self):
-        data = self.stickers.copy()
-        for key in data:
-            if "chaLabel" in data[key]:
-                del data[key]['chaLabel']
-        self.saveEvent.emit({self.key: data})
+        self.saveEvent.emit({self.key: self.stickers})
 
     # Sticker 이미지 생성
     # Sticker 클릭 이벤트 설정
     def setCharacter(self, data, key):
         try:
-            chaLabel = QLabel('', self)
+            if key in self.labels and self.labels[key]:
+                chaLabel = self.labels[key]
+            else:
+                chaLabel = QLabel('', self)
             chaFile = data['CharacterImage']
             isSizeRestricted = data['SizeRestrict']
             chaSize = data['CharacterSize']
@@ -222,11 +219,11 @@ class Sticker(QWidget):
 
             # 클릭 이벤트 설정
             self.clickable(chaLabel, key, QEvent.MouseButtonPress, Qt.LeftButton).connect(self.stickerMousePressEvent)
-            self.clickable(chaLabel, key, QEvent.MouseMove, Qt.LeftButton).connect(self.stickerMouseMoveEvent)
+            self.clickable(chaLabel, key, QEvent.MouseMove, Qt.NoButton).connect(self.stickerMouseMoveEvent)
             self.clickable(chaLabel, key, QEvent.MouseButtonRelease, Qt.LeftButton).connect(self.stickerMouseReleaseEvent)
+            self.clickable(chaLabel, key, QEvent.MouseButtonRelease, Qt.RightButton).connect(self.stickerContextMenuEvent)
 
             self.labels[key] = chaLabel
-            print(dir(QEvent))
 
         except Exception as e:
             print("Character Exception: " + str(e))
@@ -239,8 +236,7 @@ class Sticker(QWidget):
 
             def eventFilter(self, obj, event):
                 if obj == widget:
-                    # print(obj, event)
-                    if event.type() == eventType:
+                    if event.type() == eventType and event.button() == buttonType:
                         self.clicked.emit(event, self.chaKey)
                         return True
                 return False
@@ -252,35 +248,56 @@ class Sticker(QWidget):
     def stickerMousePressEvent(self, event, key):
         self.clickTime = time.time()
         self.m_flag = True
-        # self.m_Position = event.globalPos() - self.pos()  # Get the position of the mouse relative to the window
-        self.m_Position = event.globalPos()  # Get the position of the mouse relative to the window
+        self.m_Position = event.globalPos() - self.labels[key].pos()
         event.accept()  # 클릭이벤트를 처리하고 종료. ignore 시 부모위젯으로 이벤트가 넘어감
         self.setCursor(QCursor(Qt.OpenHandCursor))  # Change mouse icon
 
     def stickerMouseMoveEvent(self, event, key):
-        if Qt.LeftButton and self.m_flag:
-            value = event.globalPos() - self.m_Position  # Change window position
-            print((value.x() ** 2 + value.y() ** 2) ** 0.5)
+        if self.m_flag:
+            if self.menu_move.isChecked():
+                self.labels[key].move(event.globalPos() - self.m_Position)
+            else:
+                value = event.globalPos() - self.labels[key].pos() - self.m_Position  # Change window position
 
-            self.m_distance += (value.x() ** 2 + value.y() ** 2) ** 0.5
-            self.m_Position = event.globalPos()
-            if self.m_distance > 200:
-                self.specialVoicePlay(key)
-                self.m_flag = False
-                self.m_distance = 0
-                # self.setCursor(QCursor(Qt.ArrowCursor))
-            # if time.time() - self.clickTime > 0.8:
-            #     self.specialVoicePlay(key)
+                self.m_distance += (value.x() ** 2 + value.y() ** 2) ** 0.5
+                self.m_Position = event.globalPos() - self.labels[key].pos()
+                if self.m_distance > 300:
+                    self.specialVoicePlay(key)
+                    self.m_flag = False
+                    self.m_distance = 0
             event.accept()
 
     def stickerMouseReleaseEvent(self, event, key):
         if self.m_flag:
-            if time.time() - self.clickTime < 0.4:
-                self.idleVoicePlay(key)
+            if self.menu_move.isChecked():
+                pos = self.labels[key].pos()
+                self.stickers['characters'][key]['Position'] = [pos.x(), pos.y()]
+                self.writeDataFile()
+            else:
+                if time.time() - self.clickTime < 0.4:
+                    self.idleVoicePlay(key)
 
-        # self.writeDataFile()
-        self.m_flag = False
-        self.setCursor(QCursor(Qt.ArrowCursor))
+            self.m_flag = False
+            self.setCursor(QCursor(Qt.ArrowCursor))
+            event.accept()
+
+    def stickerContextMenuEvent(self, event, key):
+        action = self.cmenu.exec_(self.labels[key].pos() + event.pos())  # event.pos()만 하니까 화면 좌상단 구석에 생김
+        if action == self.menu_setting:     # 부관 설정
+            self.openSetting(key)
+        elif action == self.menu_hide:      # 잠시 숨기기
+            self.hideSticker(key)
+        elif action == self.menu_retire:    # 내보내기
+            self.characterQuit(key)
+        elif action == self.menu_group:     # 그룹 설정
+            self.groupEvent.emit(self.key)
+        elif action == self.menu_preset:    # 프리셋 설정
+            self.presetEvent.emit()
+        elif action == self.menu_manage:    # 위젯 설정
+            self.manageEvent.emit()
+        elif action == self.menu_quit:      # 종료
+            self.quitEvent.emit()
+
         event.accept()
 
     def loginVoicePlay(self):
@@ -295,9 +312,7 @@ class Sticker(QWidget):
             return
 
         # 랜덤 캐릭터 선택
-        print(list(loginVoiceFiles.keys()))
         randomKey = random.choice(list(loginVoiceFiles.keys()))
-        print(randomKey)
 
         # 랜덤 보이스 선택
         voiceFile = random.choice(loginVoiceFiles[randomKey])   # 랜덤 보이스
@@ -371,43 +386,38 @@ class Sticker(QWidget):
         except Exception as e:
             print("IdleVoice Exception: " + str(e))
 
-    # # MOUSE Click drag EVENT function
-    # def mousePressEvent(self, event):
-    #     print("클릭")
-    #     if event.button() == Qt.LeftButton:
-    #         for key, label in self.labels.items():
-    #             label.mousePressEvent = lambda event: print(event)
-    #             label.mousePressEvent("!!")
-    #             print(label.size())
-    #             label.move(0, 0)
-    #         self.clickTime = time.time()
-    #         self.m_flag = True
-    #         self.m_Position = event.globalPos() - self.pos()  # Get the position of the mouse relative to the window
-    #         event.accept()
-    #         self.setCursor(QCursor(Qt.OpenHandCursor))  # Change mouse icon
-    #
-    # def mouseMoveEvent(self, QMouseEvent):
-    #     if Qt.LeftButton and self.m_flag:
-    #         self.move(QMouseEvent.globalPos() - self.m_Position)  # Change window position
-    #         QMouseEvent.accept()
-    #
-    # def mouseReleaseEvent(self, QMouseEvent):
-    #     if self.m_flag:
-    #         if time.time() - self.clickTime < 0.4:
-    #             self.characterTouch()
+    def hideSticker(self, key):
+        self.labels[key].hide()
 
-        self.writeDataFile()
-        self.m_flag = False
-        self.setCursor(QCursor(Qt.ArrowCursor))
-
-    def stickerHide(self):
-        self.hide()
-
-    def stickerQuit(self):
+    def groupQuit(self):
         self.close()
 
-    def characterQuit(self):
-        pass
+    def characterQuit(self, key):
+        # 그룹 UI가 켜져있다면 그 UI의 해당 캐릭터를 삭제해야 함
+        groupUis = self.stickerManager.groupUis
+        if self.key in groupUis and groupUis[self.key]:
+            # 행 번호 찾기
+            currentRow = None
+            for idx, item in enumerate(groupUis[self.key]):
+                if item.chaKey == key:
+                    currentRow = idx
+                    break
+
+            # 해당 행 제거
+            if currentRow:
+                groupUi = groupUis[self.keyn]
+                groupUi.table.removeRow(currentRow)
+                groupUi.rowCount -= 1
+                del groupUi.groupItems[currentRow]  # 표에서 제거
+        
+        # 세이브데이터 수정
+        del self.stickerManager.jsonData['Stickers'][self.groupKey]['characters'][key]
+        
+        # 캐릭터 삭제
+        self.labels[key].close()
+        
+        # 저장
+        self.stickerManager.thereIsSomethingToSave()
 
     def setupWindow(self):
         # centralWidget = QWidget(self)
@@ -419,40 +429,20 @@ class Sticker(QWidget):
             self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.showMaximized()
 
-    def contextMenuEvent(self, event):
-        action = self.cmenu.exec_(self.mapToGlobal(event.pos()))
-        if action == self.menu_hide:  # 숨기기
-            self.stickerHide()
-        elif action == self.menu_setting:  # 부관 설정
-            self.openSetting()
-        elif action == self.menu_group:  # 그룹 설정
-            self.groupEvent.emit()
-        elif action == self.menu_preset:  # 프리셋 설정
-            self.presetEvent.emit()
-        elif action == self.menu_manage:  # 위젯 설정
-            self.manageEvent.emit()
-        elif action == self.menu_retire:  # 부관 임무에서 해제
-            self.removeEvent.emit(self.key)
-        elif action == self.menu_quit:  # 종료
-            self.quitEvent.emit()
-
-    def openSetting(self):
-        self.stickerManager.openSettingUi(self.key, self.chaKey)
-    
-    def closeEvent(self, *args, **kwargs):
-        print("스티커 종료")
-
+    def openSetting(self, chaKey):
+        self.stickerManager.openSettingUi(self.key, chaKey)
 
 # 부관 설정창
 class SettingWindow(QDialog, QWidget):
     parent = None
     chaFile = ""
-    isSizeRestricted = True
 
     loginVoiceFile = []
     idleVoiceFile = []
     specialVoiceFile = []
+    isSizeRestricted = True
 
     convertTh = None
     '''
@@ -496,8 +486,6 @@ class SettingWindow(QDialog, QWidget):
 
     def initUI(self):
         # 위젯 생성
-        # 항상 위에 고정 체크박스
-        self.AOTCheckBox = QCheckBox("항상 위에 고정")
 
         # 캐릭터 그룹박스
         self.chaGroupBox = QGroupBox("캐릭터")
@@ -592,7 +580,6 @@ class SettingWindow(QDialog, QWidget):
 
         # 레이아웃 적용
         vBox = QVBoxLayout()
-        vBox.addWidget(self.AOTCheckBox, alignment=Qt.AlignTop | Qt.AlignRight)
         vBox.addWidget(self.chaGroupBox)
         vBox.addWidget(self.voiceGroupBox)
         vBox.addWidget(self.voiceNoticeLabel)
@@ -633,7 +620,6 @@ class SettingWindow(QDialog, QWidget):
         self.voiceSlider.setValue(voiceV)
         self.isSizeRestricted = isSizeRestricted
         self.imageCheckBox.setChecked(isSizeRestricted)
-        # self.AOTCheckBox.setChecked(aot)
 
         self.loginVoice_label.setText("(%d개 설정됨)" % len(self.loginVoiceFile))
         self.idleVoice_label.setText("(%d개 설정됨)" % len(self.idleVoiceFile))
@@ -686,7 +672,6 @@ class SettingWindow(QDialog, QWidget):
 
     @pyqtSlot(str)
     def setGifCharacter(self, chaFile):
-        print("setgifcharacter")
         if chaFile:
             self.chaFile = chaFile
             self.chaLabel.setText(self.chaFile.split('/')[-1])
