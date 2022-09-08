@@ -339,10 +339,10 @@ class Sticker(QWidget):
         event.accept()
 
     def loginVoicePlay(self):
-        # 보이스가 존재하는 캐릭터만 솎아내기
+        # 숨겨져 있지 않은 캐릭 / 보이스가 존재하는 캐릭터만 솎아내기
         loginVoiceFiles = {}
         for key, data in self.stickers['characters'].items():
-            if data["LoginVoiceFiles"]:
+            if data["Visible"] and data["LoginVoiceFiles"]:
                 loginVoiceFiles[key] = data["LoginVoiceFiles"]
 
         # 보이스가 단 한개도 없는 경우
@@ -448,23 +448,25 @@ class Sticker(QWidget):
         if self.key in groupUis and groupUis[self.key]:
             # 행 번호 찾기
             currentRow = None
-            for idx, item in enumerate(groupUis[self.key]):
+            groupUi = groupUis[self.key]
+            for idx, item in enumerate(groupUi.groupItems):
                 if item.chaKey == key:
                     currentRow = idx
                     break
 
             # 해당 행 제거
             if currentRow:
-                groupUi = groupUis[self.keyn]
                 groupUi.table.removeRow(currentRow)
                 groupUi.rowCount -= 1
                 del groupUi.groupItems[currentRow]  # 표에서 제거
         
         # 세이브데이터 수정
-        del self.stickerManager.jsonData['Stickers'][self.groupKey]['characters'][key]
+        if key in self.stickerManager.jsonData['Stickers'][self.key]['characters']:
+            del self.stickerManager.jsonData['Stickers'][self.key]['characters'][key]
         
         # 사운드 객체 제거
-        del self.voiceSound[key]
+        if key in self.voiceSound:
+            del self.voiceSound[key]
         
         # 캐릭터 삭제
         self.labels[key].close()

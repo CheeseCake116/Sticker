@@ -471,6 +471,7 @@ class StickerManager(QMainWindow):
 
                 # 현재 실행되어 있는 스티커일경우
                 if groupKey == self.presetKey:
+                    print("현재 실행되어 있는 스티커")
                     self.currentSticker.stickers['characters'][chaKey] = data
                     self.currentSticker.setCharacter(data, chaKey)  # 스티커에 할당
 
@@ -490,11 +491,11 @@ class GroupManager(QWidget):
         super().__init__()
         self.groupKey = gKey
         self.stickerManager = manage
+        self.groupItems = []
         self.setWindowTitle(subName + " 그룹 관리")
         self.InitUi()
 
     def InitUi(self):
-        # 위젯 추가
         # 항상 위에 고정 체크박스
         self.AOTCheckBox = QCheckBox("항상 위에 고정")
 
@@ -602,7 +603,7 @@ class GroupManager(QWidget):
 
     def DeleteItem(self):
         currentRow = self.table.currentRow()  # 표에서 선택한 행
-        chaKey = self.groupItems[currentRow].chaKey  # 해당 그룹의 키 번호
+        chaKey = self.groupItems[currentRow].chaKey  # 해당 그룹의 캐릭터 키 번호
 
         self.table.removeRow(currentRow)
         self.rowCount -= 1
@@ -611,18 +612,36 @@ class GroupManager(QWidget):
 
         # 실행중인 스티커라면 스티커 객체에 삭제해달라고 요청
         if self.groupKey == self.stickerManager.presetKey:
-            self.stickerManager.currentSticker.characterQuit()
+            self.stickerManager.currentSticker.characterQuit(chaKey)
 
         self.stickerManager.thereIsSomethingToSave()
 
+    # 이름 변경 이벤트
+    # 이름을 직접 변경할 때 뿐만 아니라 행이 생성될때도 작동하니 조심!
     def cellChangeEvent(self, row, col):
+        # 다른 열에서 발생한 이벤트일 경우 탈출
         if col != 0:
             return
-        data = self.table.item(row, col)
-        chaName = data.text()
-        chaKey = self.groupItems[row].chaKey
-        self.stickerManager.jsonData['Stickers'][self.groupKey]['characters'][chaKey]["CharacterName"] = chaName
-        self.stickerManager.thereIsSomethingToSave()
+
+        # 행이 추가되면서 발동된 이벤트인경우 탈출
+        # groupItem에 캐릭터 키가 할당되어 있는지
+        if row < len(self.groupItems):
+            chaKey = self.groupItems[row].chaKey
+            # 해당 캐릭터 정보가 jsonData에 존재하는지
+            chaDict = self.stickerManager.jsonData['Stickers'][self.groupKey]['characters']
+            if not (chaKey in chaDict and chaDict[chaKey]):
+                return
+
+            data = self.table.item(row, col)
+            chaName = data.text()
+            self.stickerManager.jsonData['Stickers'][self.groupKey]['characters'][chaKey]["CharacterName"] = chaName
+            self.stickerManager.thereIsSomethingToSave()
+
+    # 그룹UI가 켜진 상태에서 해당 그룹이 부관으로 불러와지거나 내보내졌을 때, 부관의 상태를 변경하기 위한 함수
+    def setReady(self, state):
+        print("- Group", self.groupKey, "setReady ", state)
+        for item in self.groupItems:
+            item.setReady(state)
 
     def findRow(self, chaKey):
         row = None
@@ -661,6 +680,7 @@ class GroupManager(QWidget):
 
 class GroupItem:
     chaName = ""
+    groupKey = '-1'
     chaKey = '-1'
     state = False
     stateString = ""
@@ -674,11 +694,15 @@ class GroupItem:
 
     def __init__(self, p, _chaName, _state, ckey):
         self.parent = p
+        self.groupKey = p.groupKey
         self.chaName = _chaName
         self.state = _state
         self.chaKey = ckey
         if _state:
-            self.stateString = "업무 중"
+            if self.groupKey == self.parent.stickerManager.presetKey:
+                self.stateString = "업무 중"
+            else:
+                self.stateString = "업무 대기중"
             self.hideButton = QPushButton("숨기기")
         else:
             self.stateString = "숨김"
@@ -693,6 +717,20 @@ class GroupItem:
         self.manageButton.released.connect(self.openSettingUi)
         self.deleteButton.released.connect(self.parent.DeleteItem)
 
+    # 그룹 UI가 켜진 상태에서 해당 부관 그룹이 호출되었을 때 "업무 대기중"에서 "업무 중"으로 바꾸기 위한 함수
+    def setReady(self, state):
+        print("group", self.groupKey, ", cha", self.chaKey, "state")
+        # "숨김"이 아니면
+        if self.state:
+            # 부관이 켜지면
+            if state:
+                self.stateString = "업무 중"
+            # 부관이 꺼지면
+            else:
+                self.stateString = "업무 대기중"
+
+        self.stateItem.setText(self.stateString)
+
     def changeState(self):
         if self.state:
             self.hideSticker()
@@ -705,7 +743,7 @@ class GroupItem:
         self.stateItem.setText(self.stateString)
         self.hideButton.setText("숨김 해제")
 
-        if self.parent.groupKey == self.parent.stickerManager.presetKey:
+        if self.groupKey == self.parent.stickerManager.presetKey:
             sticker = self.parent.stickerManager.currentSticker
             sticker.labels[self.chaKey].hide()
             sticker.stickers['characters'][self.chaKey]["Visible"] = False
@@ -717,14 +755,14 @@ class GroupItem:
         self.stateItem.setText(self.stateString)
         self.hideButton.setText("숨기기")
 
-        if self.parent.groupKey == self.parent.stickerManager.presetKey:
+        if self.groupKey == self.parent.stickerManager.presetKey:
             sticker = self.parent.stickerManager.currentSticker
             sticker.labels[self.chaKey].show()
             sticker.stickers['characters'][self.chaKey]["Visible"] = True
             sticker.writeDataFile()
 
     def openSettingUi(self):
-        self.parent.stickerManager.openSettingUi(self.parent.groupKey, self.chaKey)
+        self.parent.stickerManager.openSettingUi(self.groupKey, self.chaKey)
 
 
 class PresetManager(QWidget):
@@ -743,7 +781,6 @@ class PresetManager(QWidget):
 
     # UI 설정
     def InitUi(self):
-        self.sender
         # 위젯 추가
         self.newButton = QPushButton("프리셋 추가")  # 그룹 추가 버튼 위젯
         self.table = QTableWidget(self)  # 테이블 위젯
@@ -855,26 +892,23 @@ class PresetManager(QWidget):
 
     # 그룹명 변경 이벤트
     def cellChangeEvent(self, row, col):
+        # 그룹창 켤 때도 발생함
         if col != 0:
             return
-        print("row : ", row, " col : ", col)
-        data = self.table.item(row, col)
-        groupName = data.text()
-        groupKey = self.presetItems[row].groupKey
-        self.stickerManager.jsonData['Stickers'][groupKey]["options"]["GroupName"] = groupName
-        self.stickerManager.thereIsSomethingToSave()
 
-    # "불러오기" 버튼 클릭 시 작동
-    def changeState(self):
-        # 켜진 거 찾아서 끄기
-        for preset in self.presetItems:
-            if preset.state is True:
-                preset.changeState()
+        # 행이 추가되면서 발동된 이벤트인경우 탈출
+        # presetItems에 그룹 키가 할당되어 있는지
+        if row < len(self.presetItems):
+            groupKey = self.presetItems[row].groupKey
+            # 해당 캐릭터 정보가 jsonData에 존재하는지
+            groupDict = self.stickerManager.jsonData['Stickers']
+            if not (groupKey in groupDict and groupDict[groupKey]):
+                return
 
-        # 불러오기 한 거 켜기
-        currentRow = self.table.currentRow()
-        print("currentRow : " + str(currentRow))
-        self.presetItems[currentRow].changeState()
+            data = self.table.item(row, col)
+            groupName = data.text()
+            self.stickerManager.jsonData['Stickers'][groupKey]["options"]["GroupName"] = groupName
+            self.stickerManager.thereIsSomethingToSave()
 
     # "삭제" 버튼 클릭 시 작동
     def DeleteItem(self):
@@ -930,8 +964,6 @@ class PresetItem:
         if self.state:  # 업무 해제 버튼일 경우 혼자 꺼짐
             self.GetGroupOut()
         else:  # 불러오기 버튼일 경우 켜져있는 다른 프리셋이 꺼지고 이게 켜짐
-            # self.parent.changeState()
-
             # 켜진 거 찾아서 끄기
             for preset in self.parent.presetItems:
                 if preset.state is True:
@@ -939,7 +971,6 @@ class PresetItem:
 
             # 불러오기 한 거 켜기
             currentRow = self.parent.table.currentRow()
-            print("currentRow : " + str(currentRow))
             self.parent.presetItems[currentRow].GetGroupIn()
 
     # 내보내기
@@ -948,37 +979,27 @@ class PresetItem:
         self.stateString = ""
         self.stateItem.setText(self.stateString)
         self.callButton.setText("불러오기")
-        # del self.stickerManager.currentSticker
-        # self.stickerManager.currentSticker.groupQuit()  # 스티커 종료
+        self.stickerManager.currentSticker.groupQuit()  # 스티커 종료
+        del self.stickerManager.currentSticker
         self.stickerManager.currentSticker = None  # 현재 스티커 = None
         self.stickerManager.presetKey = None  # 현재 그룹 키 = None
+        if self.groupKey in self.stickerManager.groupUis and self.stickerManager.groupUis[self.groupKey]:
+            self.stickerManager.groupUis[self.groupKey].setReady(False)
+            print("Group", self.groupKey, " off")
         self.stickerManager.thereIsSomethingToSave()
 
+    # 불러오기
     def GetGroupIn(self):
         self.state = True
         self.stateString = "업무 중"
         self.stateItem.setText(self.stateString)
         self.callButton.setText("업무 해제")
         self.stickerManager.presetKey = self.groupKey
+        if self.groupKey in self.stickerManager.groupUis and self.stickerManager.groupUis[self.groupKey]:
+            self.stickerManager.groupUis[self.groupKey].setReady(True)
+            print("Group", self.groupKey, " on")
         self.openSticker()  # 스티커 실행
         self.stickerManager.thereIsSomethingToSave()
-
-    def changeState(self):
-        if self.state:  # 끄기
-            self.state = False
-            self.stateString = ""
-            self.stateItem.setText(self.stateString)
-            self.callButton.setText("불러오기")
-            del self.stickerManager.currentSticker
-            # self.stickerManager.currentSticker.groupQuit()  # 스티커 종료
-            self.stickerManager.currentSticker = None  # 현재 스티커 = None
-
-        else:  # 켜기
-            self.state = True
-            self.stateString = "업무 중"
-            self.stateItem.setText(self.stateString)
-            self.callButton.setText("업무 해제")
-            self.openSticker()  # 스티커 실행
 
     def openSticker(self):
         data = self.stickerManager.jsonData['Stickers'][self.groupKey]
