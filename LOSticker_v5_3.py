@@ -504,6 +504,7 @@ class GroupManager(QWidget):
 
         self.newButton = QPushButton("새 부관 추가")  # 그룹 추가 버튼 위젯
         self.table = QTableWidget(self)  # 테이블 위젯
+        self.table.cellChanged.connect(self.cellChangeEvent)
 
         # 위젯 설정
         # self.newButton.setMinimumHeight(31)
@@ -612,6 +613,15 @@ class GroupManager(QWidget):
         if self.groupKey == self.stickerManager.presetKey:
             self.stickerManager.currentSticker.characterQuit()
 
+        self.stickerManager.thereIsSomethingToSave()
+
+    def cellChangeEvent(self, row, col):
+        if col != 0:
+            return
+        data = self.table.item(row, col)
+        chaName = data.text()
+        chaKey = self.groupItems[row].chaKey
+        self.stickerManager.jsonData['Stickers'][self.groupKey]['characters'][chaKey]["CharacterName"] = chaName
         self.stickerManager.thereIsSomethingToSave()
 
     def findRow(self, chaKey):
@@ -737,6 +747,7 @@ class PresetManager(QWidget):
         # 위젯 추가
         self.newButton = QPushButton("프리셋 추가")  # 그룹 추가 버튼 위젯
         self.table = QTableWidget(self)  # 테이블 위젯
+        self.table.cellChanged.connect(self.cellChangeEvent)
 
         # 위젯 설정
         # self.newButton.setMinimumHeight(31)
@@ -842,6 +853,17 @@ class PresetManager(QWidget):
 
         self.stickerManager.thereIsSomethingToSave()
 
+    # 그룹명 변경 이벤트
+    def cellChangeEvent(self, row, col):
+        if col != 0:
+            return
+        print("row : ", row, " col : ", col)
+        data = self.table.item(row, col)
+        groupName = data.text()
+        groupKey = self.presetItems[row].groupKey
+        self.stickerManager.jsonData['Stickers'][groupKey]["options"]["GroupName"] = groupName
+        self.stickerManager.thereIsSomethingToSave()
+
     # "불러오기" 버튼 클릭 시 작동
     def changeState(self):
         # 켜진 거 찾아서 끄기
@@ -926,7 +948,7 @@ class PresetItem:
         self.stateString = ""
         self.stateItem.setText(self.stateString)
         self.callButton.setText("불러오기")
-        del self.stickerManager.currentSticker
+        # del self.stickerManager.currentSticker
         # self.stickerManager.currentSticker.groupQuit()  # 스티커 종료
         self.stickerManager.currentSticker = None  # 현재 스티커 = None
         self.stickerManager.presetKey = None  # 현재 그룹 키 = None
