@@ -1,10 +1,8 @@
-import os, sys, json, random, time, subprocess
-from PyQt5.QtWidgets import QMainWindow, QSystemTrayIcon, QAction, QMenu, QLabel, QWidget, QDialog, QFileDialog, \
+import os, sys, random, pickle, psutil
+from PyQt5.QtWidgets import QMainWindow, QSystemTrayIcon, QAction, QMenu, QWidget, \
     QApplication, QTableWidget, QPushButton, QTableWidgetItem, QVBoxLayout, QHBoxLayout, QCheckBox, QHeaderView
-from PyQt5 import uic
-from PyQt5.QtCore import QThread, pyqtSignal, QSize, Qt, pyqtSlot
-from PyQt5.QtGui import QIcon, QCursor, QIntValidator, QMovie
-from PIL import Image, ImageQt
+from PyQt5.QtCore import QThread, pyqtSignal, Qt
+from PyQt5.QtGui import QIcon
 from pygame import mixer
 from ManageWindow import ManageWindow
 from Sticker2 import Sticker, SettingWindow
@@ -22,18 +20,10 @@ except:
     meipassDir = currentDir
 
 os.chdir(meipassDir)
-# scaleWindowUi = uic.loadUiType("./scale.ui")[0]
 iconPath = os.path.abspath("./lise.ico")
 
 os.chdir(currentDir)
 
-
-# os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
-# os.environ["QT_SCALE_FACTOR"] = "1"
-# os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
-# QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True) #enable highdpi scaling
-# QApplication.setAttribute(Qt.AA_DisableHighDpiScaling, True) #enable highdpi scaling
-# QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True) #use highdpi icons
 
 class SaveTimer(QThread):
     isSaved = True
@@ -45,13 +35,13 @@ class SaveTimer(QThread):
         self.manager = _manager
 
     def run(self):
+        mem = psutil.virtual_memory()
         while True:
-            # 0.1초마다 노래 하나 끝났는지 확인
-            for i in range(10):
-                time.sleep(0.1)
-                if self.manager.bgmChannel:
-                    if not self.manager.bgmChannel.get_busy():
-                        self.manager.bgmPlay(self.manager.nextBgmIndex)
+            # 매 초마다 브금 꺼졌는지 확인
+            self.sleep(1)
+            if self.manager.bgmChannel:
+                if not self.manager.bgmChannel.get_busy():
+                    self.manager.bgmPlay(self.manager.nextBgmIndex)
 
             # 1초마다 세이브 확인
             if self.isSaved is False:
@@ -61,47 +51,16 @@ class SaveTimer(QThread):
 
 class StickerManager(QMainWindow):
     # 현재 켜져 있는 부관
-    # stickerDict = {}
     currentSticker = None
 
     # 로딩 가능한 부관 전체 및 읽기/쓰기용 딕셔너리
+    # 현재는 pickle을 쓰지만 이전에는 json파일을 썼어서 변수명이 이럼
     jsonData = {
         'BGM': {
             'BGMFiles': [],
             'BGMVolume': 70
         },
         'Stickers': {}
-    }
-
-    initFile = {
-        "PresetKey": '0',
-        "BGM": {
-            'BGMFiles': [],
-            'BGMVolume': 70
-        },
-        "Stickers": {}
-    }
-
-    initGroup = {
-        "options": {
-            "GroupName": "",
-            "AlwaysOnTop": False
-        },
-        "characters": {}
-    }
-
-    initCharacter = {
-        "CharacterName": "",
-        "Position": [0, 0],  # 위치
-        "Depth": 0,  # 놓인 순서
-        "Visible": True,
-        "CharacterImage": "",
-        "LoginVoiceFiles": [],
-        "IdleVoiceFiles": [],
-        "SpecialVoiceFiles": [],
-        "CharacterSize": 800,
-        "SizeRestrict": False,
-        "VoiceVolume": 50
     }
 
     presetKey = None  # 현재 실행중인 프리셋의 키 번호
@@ -119,6 +78,7 @@ class StickerManager(QMainWindow):
 
     def __init__(self):
         super().__init__()
+
         # Init QSystemTrayIcon
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(QIcon(iconPath))
@@ -158,23 +118,29 @@ class StickerManager(QMainWindow):
         if self.currentSticker:
             self.currentSticker.loginVoicePlay()
 
+        # 프리셋UI 실행시켜놓기. 얘는 스티커 창 다 꺼져도 프로그램은 안 꺼지고 백그라운드 실행되도록 남아있어야 함
+        self.presetUi = PresetManager(self)
+        self.presetUi.hide()
+
     def readDataFile(self):
         try:
-            with open("./data.LOSJ", "r", encoding="UTF-8") as jsonFile:
-                tempJsonData = json.load(jsonFile)
+            # with open("./data.LOSJ", "r", encoding="UTF-8") as jsonFile:
+            with open("./data.LOSJ", "rb") as pickleFile:
+                # tempJsonData = json.load(jsonFile)
+                tempData = pickle.load(pickleFile)
 
                 # 키 에러를 일으키지 않도록 모든 키의 접근은 키의 존재를 확인한 후 진행
                 # 실행할 프리셋 번호 확인
                 self.presetKey = None
-                if 'PresetKey' in tempJsonData:
-                    if tempJsonData['PresetKey'] in tempJsonData['Stickers']:  # 선택된 프리셋 번호가 프리셋에 존재하는지
-                        self.presetKey = tempJsonData['PresetKey']
+                if 'PresetKey' in tempData:
+                    if tempData['PresetKey'] in tempData['Stickers']:  # 선택된 프리셋 번호가 프리셋에 존재하는지
+                        self.presetKey = tempData['PresetKey']
 
                 self.jsonData['PresetKey'] = self.presetKey
 
                 # 브금 설정
-                if 'BGM' in tempJsonData:
-                    bgmData = tempJsonData['BGM']
+                if 'BGM' in tempData:
+                    bgmData = tempData['BGM']
                     if 'BGMFiles' in bgmData:
                         self.bgmFile = bgmData['BGMFiles']
                         self.jsonData['BGM']['BGMFiles'] = bgmData['BGMFiles']
@@ -191,8 +157,8 @@ class StickerManager(QMainWindow):
                         self.bgmPlay()
 
                 # 스티커 정보
-                if 'Stickers' in tempJsonData:
-                    stickerData = tempJsonData['Stickers']
+                if 'Stickers' in tempData:
+                    stickerData = tempData['Stickers']
                     for key in stickerData:
                         # 프리셋 정보
                         data = stickerData[key]
@@ -207,7 +173,14 @@ class StickerManager(QMainWindow):
 
         except Exception as e:
             if not os.path.exists("./data.LOSJ"):
-                self.jsonData = self.initFile
+                self.jsonData = {
+                    "PresetKey": '0',
+                    "BGM": {
+                        'BGMFiles': [],
+                        'BGMVolume': 70
+                    },
+                    "Stickers": {}
+                }
 
         finally:
             # 걸러진 데이터로 다시 저장
@@ -216,6 +189,7 @@ class StickerManager(QMainWindow):
             # 캐릭터가 없으면 프리셋 창 오픈
             if not self.currentSticker:
                 self.openPresetUi()
+
 
     def loadSticker(self, data, key):
         if self.currentSticker:
@@ -229,8 +203,10 @@ class StickerManager(QMainWindow):
         self.thereIsSomethingToSave()
 
     def writeDataFile(self):
-        with open("./data.LOSJ", "w", encoding="UTF-8") as jsonFile:
-            json.dump(self.jsonData, jsonFile, indent=2)
+        # with open("./data.LOSJ", "w", encoding="UTF-8") as jsonFile:
+        #     json.dump(self.jsonData, jsonFile, indent=2)
+        with open("./data.LOSJ", "wb") as pickleFile:
+            pickle.dump(self.jsonData, pickleFile)
             print("save")
 
     # 저장할 필요가 있을 때만 자동저장을 호출함
@@ -318,13 +294,6 @@ class StickerManager(QMainWindow):
         if self.currentSticker:
             self.currentSticker.show()
 
-    def stickerRemove(self, key):
-        if key in self.stickerDict:
-            del self.stickerDict[key]
-        if key in self.jsonData['Stickers']:
-            del self.jsonData['Stickers'][key]
-        self.thereIsSomethingToSave()
-
     def bgmChanged(self, _bgmFile):
         self.bgmFile = _bgmFile
         self.jsonData['BGM']['BGMFiles'] = _bgmFile
@@ -390,8 +359,10 @@ class StickerManager(QMainWindow):
     def openPresetUi(self):
         if not self.presetUi:
             self.presetUi = PresetManager(self)
+            self.presetUi.show()
+        else:
+            self.presetUi.show()
 
-        self.presetUi.show()
 
     def openSettingUi(self, groupKey, chaKey):
         if self.settingUi is None:
@@ -478,6 +449,12 @@ class StickerManager(QMainWindow):
                 self.thereIsSomethingToSave()  # 저장
 
         self.settingUi = None
+    
+    def closeEvent(self, event):
+        print("메인윈도우 종료")
+    
+    def __del__(self):
+        print("메인윈도우 삭제")
 
 
 class GroupManager(QWidget):
@@ -674,8 +651,8 @@ class GroupManager(QWidget):
             sticker.AlwaysOnTop = aot
             sticker.setupWindow()
 
-    def closeEvent(self, event):
-        self.stickerManager.closeGroupUi(self.groupKey)
+    def __del__(self):
+        print("그룹매니저 삭제")
 
 
 class GroupItem:
@@ -763,6 +740,9 @@ class GroupItem:
 
     def openSettingUi(self):
         self.parent.stickerManager.openSettingUi(self.groupKey, self.chaKey)
+
+    def __del__(self):
+        print(f"그룹아이템 {self.chaKey} 삭제")
 
 
 class PresetManager(QWidget):
@@ -922,6 +902,13 @@ class PresetManager(QWidget):
 
         self.stickerManager.thereIsSomethingToSave()
 
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide()
+    
+    def __del__(self):
+        print("프리셋매니저 삭제")
+
 
 class PresetItem:
     groupName = ""
@@ -959,6 +946,7 @@ class PresetItem:
         self.callButton.released.connect(self.callButtonHandler)
         self.manageButton.released.connect(self.openGroupUi)
         self.deleteButton.released.connect(self.parent.DeleteItem)
+        print(f"프리셋아이템 {self.groupKey} 생성")
 
     def callButtonHandler(self):
         if self.state:  # 업무 해제 버튼일 경우 혼자 꺼짐
@@ -980,12 +968,10 @@ class PresetItem:
         self.stateItem.setText(self.stateString)
         self.callButton.setText("불러오기")
         self.stickerManager.currentSticker.groupQuit()  # 스티커 종료
-        del self.stickerManager.currentSticker
         self.stickerManager.currentSticker = None  # 현재 스티커 = None
         self.stickerManager.presetKey = None  # 현재 그룹 키 = None
         if self.groupKey in self.stickerManager.groupUis and self.stickerManager.groupUis[self.groupKey]:
             self.stickerManager.groupUis[self.groupKey].setReady(False)
-            print("Group", self.groupKey, " off")
         self.stickerManager.thereIsSomethingToSave()
 
     # 불러오기
@@ -997,7 +983,6 @@ class PresetItem:
         self.stickerManager.presetKey = self.groupKey
         if self.groupKey in self.stickerManager.groupUis and self.stickerManager.groupUis[self.groupKey]:
             self.stickerManager.groupUis[self.groupKey].setReady(True)
-            print("Group", self.groupKey, " on")
         self.openSticker()  # 스티커 실행
         self.stickerManager.thereIsSomethingToSave()
 
@@ -1009,6 +994,9 @@ class PresetItem:
 
     def openGroupUi(self):
         self.stickerManager.openGroupUi(groupKey=self.groupKey)
+    
+    def __del__(self):
+        print(f"프리셋아이템 {self.groupKey} 삭제")
 
 
 # 크기 조절, 회전을 맡는 UI인데 개편작업으로 삭제
@@ -1039,6 +1027,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     manage = StickerManager()
+    manage.hide()
 
     # 프로그램을 이벤트루프로 진입시키는(프로그램을 작동시키는) 코드
     app.exec()

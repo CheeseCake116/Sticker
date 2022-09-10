@@ -1,9 +1,10 @@
-import os, sys, random, time, subprocess
+import os, sys, random, subprocess
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import QThread, pyqtSignal, QSize, Qt, pyqtSlot, QObject, QEvent
 from PyQt5.QtGui import QIcon, QCursor, QIntValidator, QMovie, QPixmap, QHoverEvent
 from PIL import Image, ImageQt
 from pygame import mixer
+from datetime import datetime
 
 currentDir = os.getcwd()
 
@@ -19,19 +20,9 @@ loadImg = os.path.abspath("./loading.png")
 os.chdir(currentDir)
 ffmpegEXE = os.path.abspath("./ffmpeg/ffmpeg.exe").replace("\\", "/")
 
-class Loading(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("webm 변환중")
-        self.setWindowIcon(QIcon(iconPath))
-        self.loadLabel = QLabel('', self)
-
-        self.loadPix = QPixmap(loadImg)
-        self.loadLabel.setPixmap(self.loadPix)
-
 
 class Sticker(QWidget):
-    '''
+    """
     stickers = {
         'options': {
             "AlwaysOnTop": False
@@ -55,15 +46,13 @@ class Sticker(QWidget):
         }
         ...
     }
-    '''
+    """
 
     saveEvent = pyqtSignal(dict)
     manageEvent = pyqtSignal()  # 부관 설정창 열기
     groupEvent = pyqtSignal(str)  # 그룹 설정창 열기
     presetEvent = pyqtSignal()  # 프리셋 설정창 열기
-    removeEvent = pyqtSignal(str)  # 부관 업무에서 해제
     quitEvent = pyqtSignal()  # 프로그램 종료
-
 
     def __init__(self, manager, data, key):
         super().__init__()
@@ -93,7 +82,6 @@ class Sticker(QWidget):
         self.manageEvent.connect(self.stickerManager.openManageUi)
         self.groupEvent.connect(self.stickerManager.openGroupUi)
         self.presetEvent.connect(self.stickerManager.openPresetUi)
-        self.removeEvent.connect(self.stickerManager.stickerRemove)
         self.quitEvent.connect(self.stickerManager.programQuit)
 
         # 컨텍스트 메뉴
@@ -112,6 +100,9 @@ class Sticker(QWidget):
 
         # 윈도우 설정
         self.setupWindow()
+
+    def closeEvent(self, QCloseEvent):
+        print("스티커 꺼짐")
 
     def readDataFile(self, jsonData):
         if jsonData:
@@ -172,6 +163,7 @@ class Sticker(QWidget):
             else:
                 chaLabel = QLabel('', self)
 
+            chaLabel.closeEvent = lambda temp : print(f'라벨 {key} 삭제')
             # 캐릭터 데이터
             chaFile = data['CharacterImage']
             isSizeRestricted = data['SizeRestrict']
@@ -185,7 +177,7 @@ class Sticker(QWidget):
 
             # webm 파일은 gif 변환 과정이 필요하므로 다시 등록하게 하여 변환 과정을 거침
             if chaFile.split(".")[-1] in ["webm"]:
-                self.openSetting()
+                self.openSetting(key)
                 return
 
             img = Image.open(chaFile)
@@ -227,7 +219,9 @@ class Sticker(QWidget):
                 chaLabel.setPixmap(ImageQt.toqpixmap(pilImage_resize))
 
             # 이미지 숨김 상태인지
-            if not visible:
+            if visible:
+                chaLabel.show()
+            else:
                 chaLabel.hide()
 
             # 클릭 이벤트 설정
@@ -435,7 +429,9 @@ class Sticker(QWidget):
 
     def groupQuit(self):
         for key, label in self.labels.items():
-            label.close()
+            label.movie().deleteLater()
+            print(f"movie {key} 삭제")
+            # label.close()
 
         self.labels = {}
         self.stickers = {}
@@ -488,6 +484,9 @@ class Sticker(QWidget):
 
     def openSetting(self, chaKey):
         self.stickerManager.openSettingUi(self.key, chaKey)
+    
+    def __del__(self):
+        print("스티커 객체 삭제")
 
 # 부관 설정창
 class SettingWindow(QDialog, QWidget):
@@ -545,7 +544,13 @@ class SettingWindow(QDialog, QWidget):
         # 캐릭터 그룹박스
         self.chaGroupBox = QGroupBox("캐릭터")
         self.chaButton = QPushButton("캐릭터 설정")
-        self.chaLabel = QLabel("")
+        self.chaLabel = QLabel("")                          # 설정된 캐릭터 이미지 파일명 표시하는 라벨
+        self.chaProgress = QProgressBar(self)
+        self.chaProgress.setRange(0, 10000)
+        self.chaProgress.setValue(0)
+        self.chaProgress.setTextVisible(False)
+        self.chaCancelButton = QPushButton("변환취소")
+        self.chaCancelButton.released.connect(self.convertStop)
         self.imageCheckBox = QCheckBox("이미지 크기 제한")
         self.chaSizeLine = QLineEdit("400")
         self.pxLabel = QLabel("px")
@@ -584,9 +589,18 @@ class SettingWindow(QDialog, QWidget):
         cha_HBL2_Widget.setLayout(cha_HBL2)
         cha_HBL2.setContentsMargins(0, 0, 0, 0)
 
+        self.cha_HBL3_Widget = QWidget()
+        cha_HBL3 = QHBoxLayout()
+        cha_HBL3.addWidget(self.chaProgress, alignment=Qt.AlignLeft)
+        cha_HBL3.addWidget(self.chaCancelButton)
+        self.cha_HBL3_Widget.setLayout(cha_HBL3)
+        cha_HBL3.setContentsMargins(0, 0, 0, 0)
+        self.cha_HBL3_Widget.hide()
+
         chaVBox = QVBoxLayout()
         chaVBox.addWidget(cha_HBL1_Widget, alignment=Qt.AlignLeft)
         chaVBox.addWidget(cha_HBL2_Widget, alignment=Qt.AlignLeft)
+        chaVBox.addWidget(self.cha_HBL3_Widget, alignment=Qt.AlignLeft)
         self.chaGroupBox.setLayout(chaVBox)
 
         # 보이스 그룹박스
@@ -680,53 +694,152 @@ class SettingWindow(QDialog, QWidget):
         self.idleVoice_label.setText("(%d개 설정됨)" % len(self.idleVoiceFile))
         self.specialVoice_label.setText("(%d개 설정됨)" % len(self.specialVoiceFile))
 
-    # 컨버트 도중 다른 조작 못하게 막는 조치 해아함
-    # 설정 창을 닫는 행위
-    # 설정창 적용 또는 취소 버튼을 누르는 행위
-    # 트레이 아이콘에서 숨기기 버튼으로 설정창을 닫게 하는 행위
-    # 아니면 컨버트를 중단시키는 코드를 넣어야 할듯
-
     class ConvertWebmtoGif(QThread):
         chaFile = ""
         resultEvent = pyqtSignal(str)
+        updateEvent = pyqtSignal(str, int)  # 라벨 표시값, 진행바에 사용될 정수값
+        cancelEvent = pyqtSignal()  # 변환 취소된 후 종료될 때 작동
+        killEvent = pyqtSignal()
+        stop = False
+        process = None
+
+        def __init__(self, chaFile):
+            super().__init__()
+            self.chaFile = chaFile
 
         def run(self):
             filename = os.path.splitext(self.chaFile)[0].split("/")[-1]
+            newChaFile = "./character/" + filename + ".gif"
+            count = 1
+            while os.path.exists(newChaFile):
+                count += 1
+                newChaFile = "./character/" + filename + " (%d)" % count + ".gif"
+
             command = [
                 ffmpegEXE,
                 "-y",
-                "-c:v",
-                "libvpx-vp9",
-                "-i",
-                self.chaFile,
-                "-lavfi",
-                "split[v],palettegen,[v]paletteuse",
-                "./character/" + filename + ".gif"
+                "-c:v", "libvpx-vp9",
+                "-i", self.chaFile,
+                "-lavfi", "split[v],palettegen,[v]paletteuse",
+                newChaFile
             ]
-            if subprocess.run(command, creationflags=subprocess.CREATE_NO_WINDOW).returncode == 0:
-                print("FFmpeg Script Ran Successfully")
-                self.chaFile = "./character/" + filename + ".gif"
-                self.resultEvent.emit(self.chaFile)
-            else:
-                print("There was an error running your FFmpeg script")
-                self.resultEvent.emit("")
-            self.quit()
+            # if subprocess.run(command, creationflags=subprocess.CREATE_NO_WINDOW).returncode == 0:
+            #     print("FFmpeg Script Ran Successfully")
+            #     self.chaFile = "./character/" + filename + ".gif"
+            #     self.resultEvent.emit(self.chaFile)
+            #
+            # else:
+            #     print("There was an error running your FFmpeg script")
+            #     self.resultEvent.emit("")
+            #
+            # self.quit()
+            try:
+                duration = None
+                self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                           universal_newlines=True)
+
+                for line in self.process.stdout:
+                    if self.stop:
+                        break
+
+                    if "DURATION" in line:
+                        dataList = line.split()
+                        dt = datetime.strptime(dataList[2][0:12], "%H:%M:%S.%f")  # '00:00:01.933'
+                        duration = (dt.hour * 3600 + dt.minute * 60 + dt.second) * 1000000 + dt.microsecond
+                        self.updateEvent.emit("0%", 0)
+                    if "time=" in line:
+                        dataList = line.split()
+                        dt = datetime.strptime(dataList[6][5:], "%H:%M:%S.%f")  # '00:00:01.91'
+                        currentTime = (dt.hour * 3600 + dt.minute * 60 + dt.second) * 1000000 + dt.microsecond
+                        rate = currentTime / duration
+                        self.updateEvent.emit("%.2f" % (rate * 100) + "%", int(rate * 10000))
+
+                # 변환 취소 시 process가 kill되므로 for문도 빠져나와짐
+                if self.stop:
+                    # FFmpeg가 변환중인 파일을 잡고 있으므로 잠시 기다리기
+                    self.sleep(1)
+
+                    # 변환중이던 파일 삭제
+                    if os.path.exists(newChaFile):
+                        os.remove(newChaFile)
+
+                    # 변환 취소됨을 알림
+                    self.cancelEvent.emit()
+
+                    # 객체 삭제
+                    self.quit()
+
+                else:
+                    self.process = None
+                    print("FFmpeg Script Ran Successfully")
+                    self.chaFile = newChaFile
+                    self.resultEvent.emit(self.chaFile)
+            except Exception as e:
+                print("ConvertException: ", e)
+                self.quit()
 
     def setCharacter(self):
+        if self.convertTh:
+            QMessageBox.warning(self, "gif 변환 중", "gif 변환 중입니다.\n변환 작업을 취소해야 부관을 변경할 수 있습니다.")
+            return
+
         fname = QFileDialog.getOpenFileName(self, "캐릭터 선택", "./character", "Character File(*.webp *.png *.gif *.webm)")
         if fname[0]:
             self.chaFile = fname[0]
             if self.chaFile.split(".")[-1] == "webm":
-                self.chaLabel.setText("webm 파일 변환중...")
-                self.convertTh = self.ConvertWebmtoGif()
-                self.convertTh.chaFile = self.chaFile
-                self.convertTh.resultEvent.connect(self.setGifCharacter)
-                self.convertTh.start()
+                buttonReply = QMessageBox.information(
+                    self, 'gif 변환 알림', "webm 파일은 gif로 변환해야 사용할 수 있습니다.\n지금 변환하시겠습니까?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+
+                if buttonReply == QMessageBox.Yes:
+                    self.chaLabel.setText("파일 변환중...")
+                    self.cha_HBL3_Widget.show()
+                    self.chaProgress.setValue(0)
+                    self.convertTh = self.ConvertWebmtoGif(self.chaFile)
+                    self.convertTh.updateEvent.connect(self.progressUpdate)
+                    self.convertTh.resultEvent.connect(self.setGifCharacter)
+                    self.convertTh.cancelEvent.connect(self.convertCanceled)
+                    self.convertTh.start()
+                else:
+                    self.chaFile = None
+                    self.chaLabel.setText("")
             else:
                 self.chaLabel.setText(self.chaFile.split('/')[-1])
 
+    @pyqtSlot(str, int)
+    def progressUpdate(self, rate_str, rate_int):
+        self.chaLabel.setText("파일 변환중... " + rate_str)
+        self.chaProgress.setValue(rate_int)
+
+    # 변환 취소 요청
+    @pyqtSlot()
+    def convertStop(self):
+        # FFmpeg 종료
+        self.convertTh.stop = True
+        if self.convertTh:
+            self.convertTh.process.kill()
+
+        self.chaLabel.setText("변환 취소 중...")
+
+    # 변환 취소된 후
+    @pyqtSlot()
+    def convertCanceled(self):
+        self.convertTh = None
+        self.cha_HBL3_Widget.hide()
+
+        # 기존에 설정해둔 이미지가 있을 경우 텍스트 복구
+        if self.chaFile:
+            self.chaLabel.setText(self.chaFile.split('/')[-1])
+        else:
+            self.chaLabel.setText("")
+
+
     @pyqtSlot(str)
     def setGifCharacter(self, chaFile):
+        self.convertTh = None
+        self.cha_HBL3_Widget.hide()
         if chaFile:
             self.chaFile = chaFile
             self.chaLabel.setText(self.chaFile.split('/')[-1])
@@ -752,13 +865,26 @@ class SettingWindow(QDialog, QWidget):
             self.specialVoice_label.setText("(%d개 설정됨)" % len(self.specialVoiceFile))
 
     def applySetting(self):
-        self.accept()
+        if self.convertTh:
+            QMessageBox.warning(self, 'gif 변환 중', 'gif 변환 도중에는 창을 닫을 수 없습니다.')
+        else:
+            self.accept()
 
     def closeSetting(self):
-        self.reject()
+        if self.convertTh:
+            QMessageBox.warning(self, 'gif 변환 중', 'gif 변환 도중에는 창을 닫을 수 없습니다.')
+        else:
+            self.reject()
 
-    def closeEvent(self, *args, **kwargs):
-        self.reject()
+    def closeEvent(self, event):
+        if self.convertTh:
+            QMessageBox.warning(self, 'gif 변환 중', 'gif 변환 도중에는 창을 닫을 수 없습니다.')
+            event.ignore()
+        else:
+            self.reject()
 
     def showModal(self):
         return super().exec_()
+    
+    def __del__(self):
+        print("세팅윈도우 삭제")
