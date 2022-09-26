@@ -5,7 +5,7 @@ from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QIcon
 from pygame import mixer
 from ManageWindow import ManageWindow
-from Sticker2 import Sticker, SettingWindow
+from Sticker3 import Sticker, SettingWindow
 
 '''
 빌드 후 임시폴더 위치를 찾기 위한 설정
@@ -119,8 +119,8 @@ class StickerManager(QMainWindow):
             self.currentSticker.loginVoicePlay()
 
         # 프리셋UI 실행시켜놓기. 얘는 스티커 창 다 꺼져도 프로그램은 안 꺼지고 백그라운드 실행되도록 남아있어야 함
-        self.presetUi = PresetManager(self)
-        self.presetUi.hide()
+        if not self.presetUi:
+            self.presetUi = PresetManager(self)
 
     def readDataFile(self):
         try:
@@ -129,58 +129,48 @@ class StickerManager(QMainWindow):
                 # tempJsonData = json.load(jsonFile)
                 tempData = pickle.load(pickleFile)
 
+                # 브금 설정
+                bgmData = tempData.get('BGM')
+                if bgmData:
+                    self.bgmFile = bgmData.get('BGMFiles', [])
+                    self.jsonData['BGM']['BGMFiles'] = self.bgmFile
+                    self.bgmVolume = bgmData.get('BGMVolume', 50)
+                    self.jsonData['BGM']['BGMVolume'] = self.bgmVolume
+
+                    # 브금 실행
+                    self.bgmPlay()
+
                 # 키 에러를 일으키지 않도록 모든 키의 접근은 키의 존재를 확인한 후 진행
                 # 실행할 프리셋 번호 확인
                 self.presetKey = None
                 if 'PresetKey' in tempData:
-                    if tempData['PresetKey'] in tempData['Stickers']:  # 선택된 프리셋 번호가 프리셋에 존재하는지
-                        self.presetKey = tempData['PresetKey']
+                    if 'Stickers' in tempData:
+                        if tempData['PresetKey'] in tempData['Stickers']:  # 실행할 프리셋이 실재하는지
+                            self.presetKey = tempData.get('PresetKey', None)
+
+                        # 스티커 정보
+                        stickerData = tempData.get('Stickers', {})
+                        for key, data in stickerData.items():
+                            # 딕셔너리에 저장
+                            # 나머지 데이터 검증은 Sticker2에서 진행
+                            self.jsonData['Stickers'][key] = data
+
+                            # 실행해야 할 프리셋과 키가 같으면 스티커 생성
+                            if self.presetKey == key:
+                                self.loadSticker(data=data, key=key)
 
                 self.jsonData['PresetKey'] = self.presetKey
 
-                # 브금 설정
-                if 'BGM' in tempData:
-                    bgmData = tempData['BGM']
-                    if 'BGMFiles' in bgmData:
-                        self.bgmFile = bgmData['BGMFiles']
-                        self.jsonData['BGM']['BGMFiles'] = bgmData['BGMFiles']
-
-                    try:
-                        if 'BGMVolume' in bgmData:
-                            self.bgmVolume = int(bgmData['BGMVolume'])
-                            self.jsonData['BGM']['BGMVolume'] = bgmData['BGMVolume']
-                    except:
-                        pass
-
-                    # 브금 실행
-                    if not self.bgmSound:
-                        self.bgmPlay()
-
-                # 스티커 정보
-                if 'Stickers' in tempData:
-                    stickerData = tempData['Stickers']
-                    for key in stickerData:
-                        # 프리셋 정보
-                        data = stickerData[key]
-
-                        # 딕셔너리에 저장
-                        self.jsonData['Stickers'][key] = data
-
-                        # 실행해야 할 프리셋과 키가 같으면 스티커 생성
-                        if self.presetKey == key:
-                            self.loadSticker(data=data, key=key)
-
-
         except Exception as e:
-            if not os.path.exists("./data.LOSJ"):
-                self.jsonData = {
-                    "PresetKey": '0',
-                    "BGM": {
-                        'BGMFiles': [],
-                        'BGMVolume': 70
-                    },
-                    "Stickers": {}
-                }
+            # 기본 데이터로 초기화
+            self.jsonData = {
+                "PresetKey": None,
+                "BGM": {
+                    'BGMFiles': [],
+                    'BGMVolume': 70
+                },
+                "Stickers": {}
+            }
 
         finally:
             # 걸러진 데이터로 다시 저장
@@ -193,18 +183,15 @@ class StickerManager(QMainWindow):
 
     def loadSticker(self, data, key):
         if self.currentSticker:
-            self.currentSticker.resetSticker(self, data=data, key=key)
+            self.currentSticker.resetSticker(data, key)
         else:
-            sticker = Sticker(self, data=data, key=key)
-        self.currentSticker = sticker
+            self.currentSticker = Sticker(self, data=data, key=key)
         self.presetKey = key
-        sticker.showMaximized()
+        self.currentSticker.showMaximized()
         self.jsonData['PresetKey'] = key
         self.thereIsSomethingToSave()
 
     def writeDataFile(self):
-        # with open("./data.LOSJ", "w", encoding="UTF-8") as jsonFile:
-        #     json.dump(self.jsonData, jsonFile, indent=2)
         with open("./data.LOSJ", "wb") as pickleFile:
             pickle.dump(self.jsonData, pickleFile)
             print("save")
@@ -372,14 +359,11 @@ class StickerManager(QMainWindow):
             loginVoiceFile = data['LoginVoiceFiles']  # 로그인 보이스 경로 리스트
             idleVoiceFile = data['IdleVoiceFiles']  # 터치 보이스 경로 리스트
             specialVoiceFile = data['SpecialVoiceFiles']  # 특수터치 보이스 경로 리스트
-            chaSize = data['CharacterSize']  # 캐릭터 사이즈 제한값
             voiceVolume = data['VoiceVolume']  # 보이스 볼륨값
-            isSizeRestricted = data['SizeRestrict']  # 사이즈 제한 여부
 
             self.settingUi = SettingWindow()
             self.settingUi.setParent(self)
-            self.settingUi.setSetting(chaFile, loginVoiceFile, idleVoiceFile, specialVoiceFile, chaSize, voiceVolume,
-                                      isSizeRestricted)
+            self.settingUi.setSetting(chaFile, loginVoiceFile, idleVoiceFile, specialVoiceFile, voiceVolume)
             r = self.settingUi.showModal()
 
             if r:
@@ -390,9 +374,6 @@ class StickerManager(QMainWindow):
                     #     self.assignEvent.emit(self.key, self)
 
                     chaFile = self.settingUi.chaFile
-
-                # 캐릭터 크기 제한
-                isSizeRestricted = self.settingUi.imageCheckBox.isChecked()
 
                 # 캐릭터 사이즈
                 try:
@@ -435,14 +416,11 @@ class StickerManager(QMainWindow):
                 data['LoginVoiceFiles'] = loginVoiceFile
                 data['IdleVoiceFiles'] = idleVoiceFile
                 data['SpecialVoiceFiles'] = specialVoiceFile
-                data['CharacterSize'] = chaSize
                 data['VoiceVolume'] = voiceVolume
-                data['SizeRestrict'] = isSizeRestricted
                 self.jsonData['Stickers'][groupKey]['characters'][chaKey] = data
 
                 # 현재 실행되어 있는 스티커일경우
                 if groupKey == self.presetKey:
-                    print("현재 실행되어 있는 스티커")
                     self.currentSticker.stickers['characters'][chaKey] = data
                     self.currentSticker.setCharacter(data, chaKey)  # 스티커에 할당
 
@@ -568,8 +546,9 @@ class GroupManager(QWidget):
                 "LoginVoiceFiles": [],
                 "IdleVoiceFiles": [],
                 "SpecialVoiceFiles": [],
-                "CharacterSize": 800,
-                "SizeRestrict": False,
+                "Flip": False,
+                "Size": 100,
+                "Rotation": 0,
                 "VoiceVolume": 50
             }
         }
@@ -696,7 +675,6 @@ class GroupItem:
 
     # 그룹 UI가 켜진 상태에서 해당 부관 그룹이 호출되었을 때 "업무 대기중"에서 "업무 중"으로 바꾸기 위한 함수
     def setReady(self, state):
-        print("group", self.groupKey, ", cha", self.chaKey, "state")
         # "숨김"이 아니면
         if self.state:
             # 부관이 켜지면
@@ -992,6 +970,10 @@ class PresetItem:
 
         self.stickerManager.loadSticker(data, key)
 
+    def deleteSticker(self):
+        self.GetGroupOut()
+        self.parent.DeleteItem()
+
     def openGroupUi(self):
         self.stickerManager.openGroupUi(groupKey=self.groupKey)
     
@@ -1027,7 +1009,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
 
     manage = StickerManager()
-    manage.hide()
 
     # 프로그램을 이벤트루프로 진입시키는(프로그램을 작동시키는) 코드
     app.exec()
