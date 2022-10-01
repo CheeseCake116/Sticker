@@ -8,6 +8,7 @@ from pygame import mixer
 from datetime import datetime
 import cv2
 import imageio.v3 as iio
+import shutil
 
 currentDir = os.getcwd()
 
@@ -25,7 +26,7 @@ ffmpegEXE = os.path.abspath("./ffmpeg/ffmpeg.exe").replace("\\", "/")
 
 
 # GIF 재생을 위해 각 프레임을 메모리에 올려서 갈아끼우는 방식
-# QMovie에 올리는 것보다 CPU 활용이 훨씬 나음
+# QMovie에 올리는 것보다 CPU 활용이 훨씬 나음fcv
 # 메모리를 많이 잡아먹긴 하지만 이미지를 작게 줄이면 좀 적게 먹음
 
 class LoadingImage(QThread):
@@ -35,13 +36,16 @@ class LoadingImage(QThread):
         super().__init__()
         self.centerX, self.centerY = center
         self.label = label
+        self.label.show()
 
     def run(self):
         count = 0
         pixload = QPixmap(loadImg)
         width = pixload.width()
         pixload = pixload.scaledToWidth(width / 2)
-        while self.stop is False:
+        while True:
+            if self.stop:
+                break
             loadTransform = QTransform().rotate(360 / 12 * count)
             pixImage = pixload.transformed(loadTransform, mode=Qt.SmoothTransformation)
             width = pixImage.width()
@@ -51,6 +55,21 @@ class LoadingImage(QThread):
             self.label.setPixmap(pixImage)
             count += 1
             self.msleep(100)
+
+        print("loading stop")
+        self.label.hide()
+
+
+class RefCountThread(QThread):
+    parent = None
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+
+    def run(self):
+        while True:
+            print(sys.getrefcount(self.parent))
+            self.sleep(1)
 
 
 class GifThread(QThread):
@@ -62,7 +81,7 @@ class GifThread(QThread):
         super().__init__()
         self.parent = parent
         self.chaFile = chaFile
-        self.filename = os.path.splitext(chaFile)[0].split("/")[-1]
+        self.filename = ""
         self.chaLabel = chaLabel
         self.pixList = None
         self.fileList = None
@@ -75,11 +94,28 @@ class GifThread(QThread):
         self.width = 10
         self.height = 10
         self.currentIndex = 0
+        # self.refCountTh = RefCountThread(self)
+        # self.refCountTh.start()
+
+    def reset(self, chaFile, pos, scale, rotation, flipValue):
+        if self.chaFile != chaFile:
+            self.chaFile = chaFile
+            self.filename = ""
+            self.fileList = None
+            self.pixList = None
+
+        self.stop = False
+        self.pause = False
+        self.x, self.y = pos
+        self.scale = scale
+        self.rotation = rotation
+        self.flip = flipValue
+        self.currentIndex = 0
 
     # 해당 프레임 파일 주소를 반환
     def getFileName(self, idx):
         # 파일 번호는 1부터 시작
-        return f"./character/{self.filename}-{str(idx + 1)}.png"
+        return f"{meipassDir}/temp/forUnzip/{self.filename}-{str(idx + 1)}.png"
 
     # 현재 인덱스의 픽스맵을 리턴
     def getCurrentPixmap(self):
@@ -102,7 +138,11 @@ class GifThread(QThread):
     def run(self):
         # 첫 생성 시에만 압축 풀기
         if self.fileList is None:
-            self.unzip()
+            try:
+                print("unzip")
+                self.unzip()
+            except Exception as e:
+                print("GifRunError :", e)
 
         # 애니메이션 루프 재생
         # self.pixmapAnimation()
@@ -111,12 +151,12 @@ class GifThread(QThread):
 
         # 루프 종료 시 stop 체크
         if self.stop:
-            self.deleteLater()
-            print("쓰레쉬 quit")
+            # self.pixList = []
+            print("쓰레드 quit")
 
     def unzip(self):
         # 경로 설정
-        file_path = './character'
+        file_path = f'{meipassDir}/temp/forUnzip'
 
         # 압축 해제
         output_unzip = zipfile.ZipFile(self.chaFile, "r")  # "r": read 모드
@@ -125,35 +165,38 @@ class GifThread(QThread):
 
         # 초기 설정
         filelist = output_unzip.namelist()
-        self.filename = filelist[0].split("/")[-1][:-6]
+        if not filelist:
+            raise Exception("압축파일 존재하지 않음")
+        self.filename = filelist[0].split("/")[-1][:-6] # "-1.png"를 제거
         self.fileList = [None] * len(filelist)
 
         # 파일 번호 추출해서 순서대로 리스트에 할당
         for file in filelist:
             findStr = "-[0-9]+[.]png"
             m = re.findall(findStr, file)
-            number: int = int(m[-1][1:-4])
+            number: int = int(m[-1][1:-4]) - 1
 
             # 파일명 정렬해서 저장
-            self.fileList[number - 1] = file
+            self.fileList[number] = file
 
     def makePixmapList(self):
         self.pixList = []
         transform = self.getTransform()
         for file in self.fileList:
-            qImg = QPixmap(f"./character/{file}")
+            qImg = QPixmap(f"{meipassDir}/temp/forUnzip/{file}")
             if transform:
                 qImg = qImg.transformed(transform, mode=Qt.SmoothTransformation)
             self.pixList.append(qImg)
 
     def makePixmapList_Threshold(self, quality=1.0):
+        print("makePixmapList")
         self.pixList = []
         if self.scale <= quality:
             transform = self.getTransform()
         else:
             transform = QTransform().scale(self.flip * quality, quality).rotate(self.flip * self.rotation)
         for file in self.fileList:
-            qImg = QPixmap(f"./character/{file}")
+            qImg = QPixmap(f"{meipassDir}/temp/forUnzip/{file}")
             if transform:
                 qImg = qImg.transformed(transform, mode=Qt.SmoothTransformation)
             self.pixList.append(qImg)
@@ -193,6 +236,7 @@ class GifThread(QThread):
                 break
 
     def pixmapAnimation_Threshold(self, quality=1.0):
+        print("pixmapAnimation")
         # Pixmap 생성
         self.makePixmapList_Threshold(quality=quality)
 
@@ -205,10 +249,11 @@ class GifThread(QThread):
             self.width *= self.scale / quality
             self.height *= self.scale / quality
 
-
         # QLabel 설정
         self.setPosition(x=self.x, y=self.y, width=self.width, height=self.height)
         self.chaLabel.resize(self.width, self.height)
+
+        print("intoLoop")
 
         self.stop = False
         # 작동 시작. pixmap을 순서대로 계속 갈아끼우는 것으로 애니메이션 구현
@@ -252,7 +297,7 @@ class GifThread(QThread):
 
                 if self.parent.m_flag is False:
                     try:
-                        pImg = QPixmap(f"./character/{file}")
+                        pImg = QPixmap(f"{meipassDir}/temp/forUnzip/{file}")
                         if transform:
                             pImg = pImg.transformed(transform, mode=Qt.SmoothTransformation)
 
@@ -379,6 +424,9 @@ class Sticker(QWidget):
         self.menu_move.setCheckable(True)
         self.menu_move.setChecked(False)
         self.menu_edit = self.cmenu.addAction("편집")
+        self.menu_stop = self.cmenu.addAction("라투디 정지")
+        self.menu_stop.setCheckable(True)
+        self.menu_stop.setChecked(False)
         self.menu_hide = self.cmenu.addAction("잠시 숨기기")
         self.menu_retire = self.cmenu.addAction("내보내기")
         self.cmenu.addSeparator()
@@ -391,10 +439,8 @@ class Sticker(QWidget):
         self.setupWindow()
 
         # 로딩창
-        # self.loadLabel = QLabel('', self)
-        # self.loadLabel.show()
-        # self.loadTh = LoadingImage((500, 500), self.loadLabel)
-        # self.loadTh.start()
+        self.loadLabel = QLabel('', self)
+        self.loadLabel.hide()
 
     # 스티커 종료 시 작동
     def closeEvent(self, QCloseEvent):
@@ -414,7 +460,7 @@ class Sticker(QWidget):
 
         defaultChaData = {
             'CharacterName': "기본 부관",
-            'Position': [0, 0],
+            'Position': None,
             'Depth': 0,
             'Visible': True,
             'CharacterImage': "",
@@ -442,7 +488,7 @@ class Sticker(QWidget):
                     chaData = defaultChaData.copy()
 
                     chaData["CharacterName"] = data.get("CharacterName", "기본 부관")
-                    chaData["Position"] = data.get("Position", [0, 0])
+                    chaData["Position"] = data.get("Position", None)
                     chaData["Depth"] = data.get("Depth", 0)
                     chaData["Visible"] = data.get("Visible", True)
                     chaData["CharacterImage"] = data.get("CharacterImage", "")
@@ -454,10 +500,15 @@ class Sticker(QWidget):
                     chaData["Rotation"] = data.get("Rotation", 0)
                     chaData["VoiceVolume"] = data.get("VoiceVolume", 50)
 
+                    # 후처리
+                    if chaData["Position"] is None:
+                        chaData["Position"] = [self.size().width() / 2, self.size().height() / 2]  # 화면 중앙
+
                     self.setCharacter(data=chaData, key=key)
 
                     # dafaultData에 각 캐릭터 정보를 추가
                     defaultData['characters'][key] = chaData
+
 
                 # 완성된 defaultData를 stickers에 할당
                 self.stickers = defaultData
@@ -495,7 +546,13 @@ class Sticker(QWidget):
             chaSize = data['Size'] / 100
             chaRotation = data['Rotation'] / 100
             visible = data['Visible']
+            position = data['Position']
             self.voiceSound[key] = None
+
+            # 센터 계산
+            if position is None:
+                position = [self.size().width() / 2, self.size().height() / 2]
+                data['Position'] = position
 
             # 파일이 존재하지 않는 경우
             if os.path.exists(chaFile) is False:
@@ -508,21 +565,26 @@ class Sticker(QWidget):
 
             # 이미지 파일 적용
             # gif일 경우
-            if chaFile.split(".")[-1] == "webm":
+            if chaFile.split(".")[-1] in ["webm", "gif"]:
                 # .frms 로딩
-                frmsFile = chaFile[:-4] + "frms"
+                ext = chaFile.split(".")[-1]
+                frmsFile = chaFile[:-len(ext)] + "frms"
 
                 if os.path.exists(frmsFile):
-                    # if key in self.gifThs and self.gifThs[key] and self.gifThs[key].chaFile == frmsFile:
-                    self.gifThreadQuit(key)
-                    gifTh = GifThread(self, frmsFile, chaLabel, pos=data['Position'], scale=chaSize,
-                                      rotation=chaRotation, flipValue=flipValue)
-                    gifTh.start()
-                    self.gifThs[key] = gifTh
+                    # 해당 부관에 이미 라투디 이미지가 할당된 경우
+                    if key in self.gifThs and self.gifThs:
+                        self.gifThs[key].stop = True
+                        self.gifThs[key].wait(1000)
+                        self.gifThs[key].reset(frmsFile, pos=position, scale=chaSize,
+                                               rotation=chaRotation, flipValue=flipValue)
+                    else:
+                        self.gifThs[key] = GifThread(self, frmsFile, chaLabel, pos=position, scale=chaSize,
+                                                     rotation=chaRotation, flipValue=flipValue)
+                    self.gifThs[key].start()
 
                 # frms 변환이 이루어지지 않은 경우
                 else:
-                    QMessageBox.warning(self, '변환 필요', "webm 파일은 변환이 필요합니다.\n부관 설정에서 이미지를 다시 설정해주세요.")
+                    QMessageBox.warning(self, '변환 필요', "애니메이션 파일은 변환이 필요합니다.\n부관 설정에서 이미지를 다시 설정해주세요.")
 
             # 일반 이미지일 경우
             else:
@@ -536,7 +598,7 @@ class Sticker(QWidget):
                 # 라벨 설정
                 width = pixImage.width() * chaSize
                 height = pixImage.height() * chaSize
-                x, y = data['Position']
+                x, y = position
                 chaLabel.move(x - width / 2, y - height / 2)
                 chaLabel.resize(width, height)
                 chaLabel.setPixmap(pixImage)
@@ -654,6 +716,8 @@ class Sticker(QWidget):
             self.openSetting(key)
         elif action == self.menu_edit:      # 편집
             self.openEditWindow(key)
+        elif action == self.menu_stop:      # 편집
+            self.stopGifThread(key)
         elif action == self.menu_hide:      # 잠시 숨기기
             self.hideSticker(key)
         elif action == self.menu_retire:    # 내보내기
@@ -668,6 +732,13 @@ class Sticker(QWidget):
             self.quitEvent.emit()
 
         event.accept()
+
+    def stopGifThread(self, key):
+        if self.menu_stop.isChecked():
+            self.gifThs[key].pause = True
+        else:
+            self.gifThs[key].pause = False
+            self.gifThs[key].start()
 
     # 접속 대사 재생
     def loginVoicePlay(self):
@@ -809,27 +880,32 @@ class Sticker(QWidget):
 
         # 라투디 이미지일경우 쓰레드 객체에 정보 전달
         if key in self.gifThs and self.gifThs[key]:
-            gifTh = self.gifThs[key]
-            gifTh.flip = flipValue
-            gifTh.scale = size
-            gifTh.rotation = rotation
+            self.gifThs[key].flip = flipValue
+            self.gifThs[key].scale = size
+            self.gifThs[key].rotation = rotation
 
     # 프리셋 관리 창에서 스티커 종료 시 작동
     def groupQuit(self):
+        print("groupQuit")
+        for key, gifTh in self.gifThs.items():
+            if gifTh:
+                gifTh.stop = True
+                gifTh.wait()
+
+        self.gifThs = {}
+
         for key, label in self.labels.items():
             movie = label.movie()
             if movie:
                 movie.deleteLater()
-            # label.close()
+            label.close()
 
-        for gifTh in self.gifThs:
-            if gifTh:
-                gifTh.quit()
 
         self.gifThs = {}
         self.labels = {}
         self.stickers = {}
         self.close()
+        print("groupQuit 완료")
 
     def gifThreadQuit(self, key):
         if key in self.gifThs and self.gifThs[key]:
@@ -844,6 +920,8 @@ class Sticker(QWidget):
             gifThs.wait()
             print("작업 종료")
 
+            # del self.gifThs[key]
+            self.gifThs[key].deleteLater()
             del self.gifThs[key]
 
     # 캐릭터 업무해제 요청
@@ -877,7 +955,9 @@ class Sticker(QWidget):
             del self.voiceSound[key]
         
         # 캐릭터 삭제
-        self.labels[key].close()
+        if key in self.labels and self.labels[key]:
+            self.labels[key].close()
+            del self.labels[key]
         
         # 저장
         self.stickerManager.thereIsSomethingToSave()
@@ -1092,6 +1172,7 @@ class SettingWindow(QDialog, QWidget):
 
     def __init__(self, new=False):
         super().__init__()
+
         self.initUI()
         if new:
             self.setWindowTitle("새 부관 추가")
@@ -1116,7 +1197,7 @@ class SettingWindow(QDialog, QWidget):
         self.chaButton = QPushButton("캐릭터 설정")
         self.chaLabel = QLabel("")                          # 설정된 캐릭터 이미지 파일명 표시하는 라벨
         self.chaProgress = QProgressBar(self)
-        self.chaProgress.setRange(0, 10000)
+        self.chaProgress.setRange(0, 0)
         self.chaProgress.setValue(0)
         self.chaProgress.setTextVisible(False)
         self.chaCancelButton = QPushButton("변환취소")
@@ -1250,13 +1331,14 @@ class SettingWindow(QDialog, QWidget):
         chaFile = ""
         resultEvent = pyqtSignal(str)
         updateEvent = pyqtSignal(str, int)  # 라벨 표시값, 진행바에 사용될 정수값
+        zipEvent = pyqtSignal()  # 압축 작업에 들어갔음을 알림
         cancelEvent = pyqtSignal()  # 변환 취소된 후 종료될 때 작동
-        killEvent = pyqtSignal()
         stop = False
         process = None
 
         def __init__(self, chaFile):
             super().__init__()
+            print("gifThread Init")
             self.chaFile = chaFile
 
         @staticmethod
@@ -1274,10 +1356,48 @@ class SettingWindow(QDialog, QWidget):
         def deleteFiles(self, filename):
             fileList = []
 
+        def __del__(self):
+            print("변환쓰레드 삭제")
+
         def run(self):
+            print("gifThread Run")
+            # 파일 확장자 추출
+            ext = self.chaFile.split(".")[-1]
+
+            # gif일 경우
+            if ext == "gif":
+                self.gifToPngs()
+
+            # webm일 경우
+            elif ext == "webm":
+                print("gifThread webmToPngs")
+                self.webmToPngs()
+
+        def gifToPngs(self):
             # 새 파일명 설정
             filename = os.path.splitext(self.chaFile)[0].split("/")[-1]
-            newChaFile = "./character/" + filename + "-%d.png"
+
+            # 프레임 추출 후 저장
+            frames = iio.imread(self.chaFile, index=None, mode="RGBA")
+            length = len(frames)
+            for idx, frame in enumerate(frames):
+                if self.stop:
+                    self.cancelEvent.emit()
+                    return
+
+                newChaFile = f"{meipassDir}/temp/forZip/{filename}-{idx}.png"
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
+                cv2.imwrite(newChaFile, frame)
+                rate = (idx + 1) / length
+                self.updateEvent.emit("%.2f" % (rate * 100) + "%", int(rate * 10000))
+
+            self.pngsToFrms(filename)
+            self.resultEvent.emit(self.chaFile)
+
+        def webmToPngs(self):
+            # 새 파일명 설정
+            filename = os.path.splitext(self.chaFile)[0].split("/")[-1]
+            newChaFile = f"{meipassDir}/temp/forZip/{filename}-%d.png"
 
             # ffmpeg 명령어
             command = [
@@ -1305,7 +1425,7 @@ class SettingWindow(QDialog, QWidget):
                     if "DURATION" in line:
                         dataList = line.split()
                         duration = self.timeToInt(dataList[2][0:12])
-                        self.updateEvent.emit("0%", 0)
+                        # self.updateEvent.emit("0%", 0)
                     if "time=" in line:
                         timetext = re.search("time=-?[0-9:.]+", line)  # time=xx:xx:xx.xxx 찾기
                         if timetext:
@@ -1329,72 +1449,85 @@ class SettingWindow(QDialog, QWidget):
                     print("FFmpeg Script Ran Successfully")
 
                     # 변환된 파일 압축
-                    file_path = os.path.abspath("./character")
-                    owd = os.getcwd()  # 현재 working directory 를 기록해둔다
-                    os.chdir(file_path)  # 압축 파일 생성할 폴더로 working directory 를 이동시킨다
+                    print("gifThread pngsToFrms")
+                    self.pngsToFrms(filename)
 
-                    zip_file = zipfile.ZipFile(f"{filename}.frms", "w")  # "w": write 모드
-                    for (path, dir, files) in os.walk(file_path):
-                        for file in files:
-                            if file.endswith('.png') and filename + "-" in file:
-                                # 상대경로를 활용하여 압축한다. (os.path.relpath)
-                                zip_file.write(os.path.join(os.path.relpath(path, file_path), file),
-                                               compress_type=zipfile.ZIP_DEFLATED)
-
-                    zip_file.close()
-                    os.chdir(owd)  # 원래의 working directory 로 되돌린다
-
+                    # 종료 알림
+                    print("gifThread end")
                     self.resultEvent.emit(self.chaFile)
-                    self.quit()
 
             except Exception as e:
                 print("ConvertException: ", e)
 
-                # 변환중이던 파일 삭제
-                if os.path.exists(newChaFile):
-                    # FFmpeg가 변환중인 파일을 잡고 있으므로 잠시 기다리기
-                    self.sleep(1)
-                    os.remove(newChaFile)
-
                 # 변환 취소됨을 알림
                 self.cancelEvent.emit()
 
-                # 객체 삭제
-                self.quit()
+        def pngsToFrms(self, filename):
+            # 변환된 파일 압축
+            self.zipEvent.emit()
+            file_path = os.path.abspath(f"{meipassDir}/temp/forZip")
+            owd = os.getcwd()  # 현재 working directory 를 기록해둔다
+            os.chdir(file_path)  # 압축 파일 생성할 폴더로 working directory 를 이동시킨다
+
+            zip_file = zipfile.ZipFile(f"{filename}.frms", "w")  # "w": write 모드
+            for (path, dir, files) in os.walk(file_path):
+                for file in files:
+                    if file.endswith('.png') and filename + "-" in file:
+                        # 상대경로를 활용하여 압축한다. (os.path.relpath)
+                        zip_file.write(os.path.join(os.path.relpath(path, file_path), file),
+                                       compress_type=zipfile.ZIP_DEFLATED)
+
+            zip_file.close()
+
+            # 완성된 압축파일 이동
+            os.chdir(owd)  # 원래의 working directory 로 되돌린다
+            shutil.move(f"{file_path}/{filename}.frms", f"./character/{filename}.frms")
+
+            # 변환에 사용한 파일 삭제
+            for file in os.scandir(file_path):
+                os.remove(file.path)
 
     def setCharacter(self):
-        if self.convertTh:
+        if self.convertTh and self.convertTh.process:
             QMessageBox.warning(self, "gif 변환 중", "gif 변환 중입니다.\n변환 작업을 취소해야 부관을 변경할 수 있습니다.")
             return
 
-        fname = QFileDialog.getOpenFileName(self, "캐릭터 선택", "./character", "Character File(*.webp *.png *.webm)")
+        fname = QFileDialog.getOpenFileName(self, "캐릭터 선택", "./character", "Character File(*.webp *.png *.gif *.webm)")
         if fname[0]:
-            self.chaFile = fname[0]
-            if self.chaFile.split(".")[-1] == "webm" and not os.path.exists(self.chaFile[:-4] + "frms"):
-                buttonReply = QMessageBox.information(
-                    self, 'gif 변환 알림', "webm 파일은 변환을 거쳐야 사용할 수 있습니다.\n지금 변환하시겠습니까?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
-                )
+            chaFile = fname[0]
 
-                if buttonReply == QMessageBox.Yes:
-                    self.chaLabel.setText("파일 변환중...")
-                    self.cha_HBL3_Widget.show()
-                    self.chaProgress.setValue(0)
-                    self.convertTh = self.ConvertWebmtoGif(self.chaFile)
-                    self.convertTh.updateEvent.connect(self.progressUpdate)
-                    self.convertTh.resultEvent.connect(self.setGifCharacter)
-                    self.convertTh.cancelEvent.connect(self.convertCanceled)
-                    self.convertTh.start()
-                else:
-                    self.chaFile = None
-                    self.chaLabel.setText("")
+            # 애니메이션이면 frms 파일이 없을 경우 변환 쓰레드 호출
+            ext = chaFile.split(".")[-1]
+            if ext in ["webm", "gif"] and not os.path.exists(chaFile[:-len(ext)] + "frms"):
+                self.callConvertThread(chaFile, ext)
             else:
-                self.chaLabel.setText(self.chaFile.split('/')[-1])
+                self.chaFile = chaFile
+                self.chaLabel.setText(chaFile.split('/')[-1])
+
+    def callConvertThread(self, chaFile, ext):
+        buttonReply = QMessageBox.information(
+            self, 'gif 변환 알림', f"{ext} 파일은 변환을 거쳐야 사용할 수 있습니다.\n지금 변환하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if buttonReply == QMessageBox.Yes:
+            self.chaLabel.setText("파일 변환중...")
+            self.cha_HBL3_Widget.show()
+            self.chaProgress.setValue(0)
+            self.convertTh = self.ConvertWebmtoGif(chaFile)
+            self.convertTh.updateEvent.connect(self.progressUpdate)
+            self.convertTh.resultEvent.connect(self.setGifCharacter)
+            self.convertTh.cancelEvent.connect(self.convertCanceled)
+            self.convertTh.zipEvent.connect(self.noticeOnZipping)
+            self.convertTh.start()
+        else:
+            self.chaLabel.setText(chaFile.split('/')[-1])
 
     # 변환 중 프로그레스 바 설정
     @pyqtSlot(str, int)
     def progressUpdate(self, rate_str, rate_int):
+        self.chaProgress.setRange(0, 10000)
         self.chaLabel.setText("파일 변환중... " + rate_str)
         self.chaProgress.setValue(rate_int)
 
@@ -1410,10 +1543,10 @@ class SettingWindow(QDialog, QWidget):
             else:
                 self.convertCanceled()
 
-
     # 변환 취소된 후
     @pyqtSlot()
     def convertCanceled(self):
+        self.convertTh.deleteLater()
         self.convertTh = None
         self.cha_HBL3_Widget.hide()
 
@@ -1423,11 +1556,15 @@ class SettingWindow(QDialog, QWidget):
         else:
             self.chaLabel.setText("")
 
+    @pyqtSlot()
+    def noticeOnZipping(self):
+        self.chaLabel.setText("변환을 마무리하는 중...")
+        self.cha_HBL3_Widget.hide()
+
     # 변환 완료 후 실행됨
     @pyqtSlot(str)
     def setGifCharacter(self, chaFile):
         self.convertTh = None
-        self.cha_HBL3_Widget.hide()
         if chaFile:
             self.chaFile = chaFile
             self.chaLabel.setText(self.chaFile.split('/')[-1])
