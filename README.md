@@ -6,7 +6,7 @@
 <br/>
 <br/>
 ## 실행 방법
-LOWidget_v1.1.zip 다운받아서 압축 풀고 안에 있는 LOWidget_v1.1.exe 실행<br/>
+<a href="https://github.com/CheeseCake116/Sticker/releases">릴리즈</a>에서 LOWidget_v1.1.zip 다운받아서 압축 풀고 안에 있는 LOWidget_v1.1.exe 실행<br/>
 <br/>
 위젯에 필요한 파일들은 다음과 같은 곳에서 구할 수 있다<br/>
 <br/>
