@@ -1,6 +1,9 @@
 # Sticker
 라오 부관 위젯<br/>
 <br/>
+[![Video Label](http://img.youtube.com/vi/m7khtpxACvs/0.jpg)](https://youtu.be/uLR1RNqJ1Mw?t=0s)
+<br/>
+<br/>
 라스트 오리진 게임 내에서만 만날 수 있던 전투원들을 윈도우 화면에 놓을 수 있는 위젯.<br/>
 캐릭터 설정 / 접속 대사 설정 / 일반 대사 설정 / 배경음 설정이 가능하고 화면에 세워둔 부관을 클릭해 대사를 들을 수 있다<br/>
 <br/>
