@@ -1,7 +1,8 @@
 # Sticker
 라오 부관 위젯<br/>
 <br/>
-[![Video Label](http://img.youtube.com/vi/m7khtpxACvs/0.jpg)](https://youtu.be/uLR1RNqJ1Mw?t=0s)
+[![Video Label](http://img.youtube.com/vi/m7khtpxACvs/0.jpg)](https://youtu.be/m7khtpxACvs?t=0s)<br/>
+(이미지 클릭 시 유튜브 링크로 이동)<br/>
 <br/>
 <br/>
 라스트 오리진 게임 내에서만 만날 수 있던 전투원들을 윈도우 화면에 놓을 수 있는 위젯.<br/>
